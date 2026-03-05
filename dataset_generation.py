@@ -878,36 +878,32 @@ def _build_sample_internal(sample_id: int, cfg: Config) -> dict | None:
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    VERBOSE           = True
-    SAVE_EVERY        = 100
-    SIMPLIFY_TIMEOUT  = 10
+    VERBOSE           = False
+    SAVE_EVERY        = 100       # save JSON checkpoint every 100 samples
+    SIMPLIFY_TIMEOUT  = 5
 
     N_SAMPLES   = 10000
     SEED        = random.randint(0, 100000)
     OUTPUT_PATH = "datasets/taylor_dataset.json"
 
     cfg = Config(
-        n_ops_range  = (2, 5),    # 2–5 internal nodes
-        max_depth    = 4,         # 4 needed: e.g. x/(1-x) has sympy depth 4
-        max_nodes    = 12,        # 12 needed: e.g. (2x+1)*sin(3x) has 10 nodes
+        n_ops_range  = (2, 5),
+        max_depth    = 4,
+        max_nodes    = 12,
         taylor_order = 4,
         x_bias       = 4.0,
     )
 
-    print("Taylor Series Dataset Generator — POC Edition")
-    print(f"  Ops      : {BINARY_OPS}  (power: x**2, x**3 only)")
-    print(f"  Unary    : {UNARY_OPS}")
-    print(f"  Leaf pool: {LEAF_POOL}  (1 has 3× weight)")
-    print(f"  Config   : ops={cfg.n_ops_range}  depth≤{cfg.max_depth}  "
-          f"nodes≤{cfg.max_nodes}  order={cfg.taylor_order}")
-    print(f"  Samples  : {N_SAMPLES}   seed={SEED}   save_every={SAVE_EVERY}")
-    print(f"  Output   : {OUTPUT_PATH}")
-    print(f"  Timeout  : {SIMPLIFY_TIMEOUT}s per sympy call\n")
+    print("=" * 68)
+    print("  Taylor Series Dataset Generator")
+    print("=" * 68)
+    print(f"  samples    : {N_SAMPLES}")
+    print(f"  seed       : {SEED}")
+    print(f"  output     : {OUTPUT_PATH}")
+    print(f"  save_every : {SAVE_EVERY}")
+    print(f"  timeout    : {SIMPLIFY_TIMEOUT}s per sympy call")
+    print("=" * 68 + "\n")
 
-    # ── 1. Roundtrip sanity test ─────────────────────────────────────────────
-    test_roundtrip(cfg=cfg, n=10, seed=SEED)
-
-    # ── 2. Generate dataset ──────────────────────────────────────────────────
     t0      = time.perf_counter()
     dataset = generate_dataset(
         cfg         = cfg,
@@ -915,8 +911,7 @@ if __name__ == "__main__":
         seed        = SEED,
         output_path = OUTPUT_PATH,
     )
-    print(f"\nFinal save → {OUTPUT_PATH}  ({len(dataset)} samples, "
-          f"{time.perf_counter()-t0:.2f}s total)\n")
 
-    # ── 3. Benchmark ─────────────────────────────────────────────────────────
-    benchmark(cfg=cfg, n_trials=50, seed=SEED)
+    print(f"\n  Final save → {OUTPUT_PATH}")
+    print(f"  Total samples : {len(dataset)}")
+    print(f"  Wall time     : {time.perf_counter() - t0:.2f}s")

@@ -27,11 +27,10 @@ from typing import Dict
 import torch
 import torch.nn as nn
 
-from dataset import EOS_ID, N_COEFFS, PAD_ID, VOCAB_SIZE, decode
+from dataset import BREAK_ID, EOS_ID, N_COEFFS, PAD_ID, SOS_ID, VOCAB_SIZE, decode, encode
 from model import CoeffPredTransformer
 from train_validate import (
     build_dataloaders,
-    evaluate_checkpoints,
     get_device,
     print_epoch,
     set_seed,
@@ -192,16 +191,6 @@ if __name__ == "__main__":
     print(f"\n  Training complete.  Best val loss: {best_val_loss:.6f}")
     print(f"  Best checkpoint: {CHECKPOINT_PATH}")
 
-    # ── Post-training evaluation (greedy decode all epoch checkpoints) ────────
-    results = evaluate_checkpoints(
-        checkpoint_dir=CHECKPOINT_DIR,
-        model=model,
-        val_loader=val_loader,
-        device=device,
-        max_gen=MAX_GEN_LEN,
-        save_path=os.path.join(CHECKPOINT_DIR, "all_epoch_predictions.npz"),
-    )
-
     # ── Sample predictions from best checkpoint ──────────────────────────────
     print("\n  Loading best model for example predictions ...")
     ckpt = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=True)
@@ -228,3 +217,154 @@ if __name__ == "__main__":
                 shown += 1
             if shown >= 4:
                 break
+
+    # ── Evaluation on fixed function list ─────────────────────────────────────
+    import sympy as sp
+    from dataset_generation import (
+        _expr_to_prefix_tokens,
+        compute_taylor_coefficients,
+        prefix_tokens_to_infix,
+    )
+    from metrics import split_segments
+
+    EVAL_FUNCTIONS = [
+        "(x**2 + 1)*sin(x)",
+        "x**3*cos(2*x)",
+        "(2*x + 1)*sin(3*x)",
+        "(x**2 - x)*cos(x)",
+        "exp(x)*(1 + x)",
+        "x*exp(2*x)",
+        "(1 + x**2)*exp(-x)",
+        "exp(x)*sin(x)",
+        "log(1 + x)",
+        "log(1 + x**2)",
+        "x*log(1 + x)",
+        "log(1 + 2*x + x**2)",
+        "x/(1 - x)",
+        "x/(1 + x)",
+        "1/(1 + x**2)",
+        "x**2/(1 - x)",
+        "sin(x**2)",
+        "exp(x**2)",
+        "cos(sqrt(1 + x))",
+        "log(1 + sin(x))",
+        "(x + 1)*exp(x)",
+        "sin(x)/(1 + x)",
+        "x**2*log(1 + x)",
+        "exp(x)*cos(x)",
+        "(x**2 + 2*x + 1)*sin(x)",
+        "(x + 2)*cos(2*x)",
+        "exp(x)*(x**2 + 1)",
+        "(x**2 + 1)*exp(2*x)",
+        "sin(x)*cos(x)",
+        "sin(2*x)/(1 + x)",
+        "cos(x)/(1 + x**2)",
+        "(x + 1)/(1 + x**2)",
+        "(x**2 + x)/(1 + x)",
+        "(x**2 + 1)/(1 + x)",
+        "log(1 + x + x**2)",
+        "log(1 + x**3)",
+        "log(1 + x)*sin(x)",
+        "log(1 + x)*cos(x)",
+        "x*exp(x)*sin(x)",
+        "x*exp(x)*cos(x)",
+        "exp(x)*log(1 + x)",
+        "exp(x)*sqrt(1 + x)",
+        "sqrt(1 + x)*sin(x)",
+        "sqrt(1 + x)*cos(x)",
+        "sqrt(1 + x)/(1 + x)",
+        "sin(x)/(1 + x**2)",
+        "cos(x)/(1 + x)",
+        "(x + 1)*sin(x)*cos(x)",
+        "(x**2 + 1)*sin(2*x)",
+        "(x**2 + x + 1)*cos(x)",
+        "(x + 1)*log(1 + x)",
+        "(x**2 + 1)*log(1 + x)",
+        "exp(x)/(1 + x)",
+        "exp(x)/(1 + x**2)",
+        "sin(x**2)/(1 + x)",
+        "cos(x**2)/(1 + x)",
+        "exp(x**2)/(1 + x)",
+        "log(1 + x**2)*sin(x)",
+        "log(1 + x**2)*cos(x)",
+        "sin(x)*exp(x**2)",
+        "cos(x)*exp(x**2)",
+    ]
+
+    TAYLOR_ORDER = N_COEFFS - 1   # 4 → coefficients c0 … c4
+    x_sym        = sp.Symbol("x")
+
+    print("\n" + "=" * 68)
+    print("  Evaluation on fixed function list (autoregressive decoding)")
+    print("=" * 68)
+
+    n_fn_correct  = 0
+    n_fn_attempted = 0
+
+    for fn_idx, fn_str in enumerate(EVAL_FUNCTIONS, 1):
+
+        # 1. Parse string → sympy
+        try:
+            expr = sp.sympify(fn_str, locals={"x": x_sym})
+        except Exception as e:
+            print(f"\n  [{fn_idx:2d}] {fn_str}")
+            print(f"       PARSE ERROR: {e}")
+            continue
+
+        # 2. Ground-truth Taylor coefficients (nth derivative at x=a)
+        gt_coeffs = compute_taylor_coefficients(expr, TAYLOR_ORDER)
+        if gt_coeffs is None:
+            print(f"\n  [{fn_idx:2d}] {fn_str}")
+            print(f"       COEFF ERROR: sympy timed out")
+            continue
+
+        gt_token_lists = [_expr_to_prefix_tokens(c) for c in gt_coeffs]
+
+        # 3. Encode source sequence
+        fn_prefix = _expr_to_prefix_tokens(expr)
+        src_ids   = [SOS_ID] + encode(fn_prefix) + [EOS_ID]
+        src       = torch.tensor([src_ids], dtype=torch.long).to(device)
+
+        # 4. Autoregressive decoding — one token at a time, predicted token
+        #    fed back as next input (implemented inside model.generate)
+        pred_ids = model.generate(src, max_len=MAX_GEN_LEN)   # List[int]
+
+        # 5. Split flat prediction on <BREAK> into per-coefficient segments
+        pred_segs = split_segments(pred_ids, BREAK_ID, EOS_ID, PAD_ID)
+
+        # 6. Compare and display
+        n_fn_attempted += 1
+        n_coeff_correct = 0
+
+        print(f"\n  [{fn_idx:2d}] f(x) = {fn_str}")
+        for coeff_i in range(N_COEFFS):
+            gt_toks   = gt_token_lists[coeff_i] if coeff_i < len(gt_token_lists) else []
+            pred_toks = pred_segs[coeff_i]       if coeff_i < len(pred_segs)     else []
+
+            gt_ids    = encode(gt_toks)           # List[int]
+            match     = (gt_ids == pred_toks)
+
+            gt_infix   = prefix_tokens_to_infix(gt_toks)
+            pred_infix = prefix_tokens_to_infix(decode(pred_toks, skip_special=False))
+
+            status = "OK" if match else "--"
+            print(
+                f"       c{coeff_i} [{status}]"
+                f"  gt={gt_infix}"
+                f"  pred={pred_infix}"
+            )
+            if match:
+                n_coeff_correct += 1
+
+        all_correct = (n_coeff_correct == N_COEFFS)
+        if all_correct:
+            n_fn_correct += 1
+        print(f"       => {n_coeff_correct}/{N_COEFFS} coefficients correct")
+
+    print("\n" + "=" * 68)
+    print(
+        f"  Result : {n_fn_correct}/{n_fn_attempted} functions"
+        f" with all {N_COEFFS} coefficients correct"
+        f"  ({100*n_fn_correct/n_fn_attempted:.1f}%)" if n_fn_attempted else ""
+    )
+    print("=" * 68)
