@@ -42,16 +42,10 @@ VOCAB: List[str] = [
     "0", "1", "2", "3", "4", "5", "6", "7", "8", "9",
     # binary operators
     "*", "/", "**",
-    # 15 unary functions
-    "sin",   "cos",   "tan",
-    "exp",   "log",   "sqrt",
-    "asin",  "acos",  "atan",
-    "sinh",  "cosh",  "tanh",
-    "asinh", "acosh", "atanh",
+    # unary functions (5 for POC — matches dataset_generation.py)
+    "sin", "cos", "exp", "log", "sqrt",
     # parentheses (kept for potential infix use)
     "(", ")",
-    # SymPy constants that can appear in coefficient expressions
-    "pi", "E", "oo", "-oo",
     # multi-coefficient delimiter (appended last to preserve existing IDs)
     "<BREAK>",
 ]
