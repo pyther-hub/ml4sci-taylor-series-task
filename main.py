@@ -160,14 +160,17 @@ if __name__ == "__main__":
 
     # ── Training loop (no greedy decode — fast) ──────────────────────────────
     best_val_loss = float("inf")
+    epoch_times: list = []
 
     for epoch in range(1, NUM_EPOCHS + 1):
         t0      = time.perf_counter()
-        train_m = train_epoch(model, train_loader, optimizer, criterion, device, CLIP_GRAD)
+        train_m = train_epoch(model, train_loader, optimizer, criterion, device, CLIP_GRAD, verbose=(epoch == 1))
         val_m   = validate(model, val_loader, criterion, device)
         scheduler.step()
 
         elapsed = time.perf_counter() - t0
+        epoch_times.append(elapsed)
+        eta_secs = (sum(epoch_times) / len(epoch_times)) * (NUM_EPOCHS - epoch)
         is_best = val_m["val_loss"] < best_val_loss
 
         # Save checkpoint every epoch (for post-training evaluation).
@@ -187,7 +190,7 @@ if __name__ == "__main__":
             best_val_loss = val_m["val_loss"]
             save_checkpoint(model, CHECKPOINT_PATH, epoch, val_m, arch_cfg)
 
-        print_epoch(epoch, NUM_EPOCHS, train_m, val_m, elapsed, is_best)
+        print_epoch(epoch, NUM_EPOCHS, train_m, val_m, elapsed, is_best, eta=eta_secs)
 
     print(f"\n  Training complete.  Best val loss: {best_val_loss:.6f}")
     print(f"  Best checkpoint: {CHECKPOINT_PATH}")

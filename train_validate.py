@@ -16,7 +16,6 @@ Functions
 from __future__ import annotations
 
 import random
-import time
 from typing import Dict, Tuple
 
 import numpy as np
@@ -96,17 +95,17 @@ def train_epoch(
     criterion: nn.Module,
     device:    torch.device,
     clip_grad: float,
+    verbose:   bool = False,
 ) -> Dict[str, float]:
-    """One full training epoch with teacher-forced loss and greedy-decode metrics.
-
-    Progress is printed every 10 % of steps showing steps left and time/step.
-    """
+    """One full training epoch with teacher-forced loss and greedy-decode metrics."""
+    import time as _time
     model.train()
 
     total_loss  = 0.0
     total_tok   = 0.0
     total_sent  = 0.0
     n_steps = len(loader)
+    _t0 = _time.perf_counter() if verbose else None
 
     for step, (src, tgt, _, _) in enumerate(loader, 1):
         src, tgt = src.to(device), tgt.to(device)
@@ -126,6 +125,13 @@ def train_epoch(
         total_tok  += m["token_acc"]
         total_sent += m["sentence_acc"]
 
+        if verbose:
+            elapsed = _time.perf_counter() - _t0
+            eta = elapsed / step * (n_steps - step)
+            print(f"\r    batch {step:4d}/{n_steps}  elapsed={elapsed:.1f}s  ETA ~{_fmt_eta(eta)}   ", end="", flush=True)
+
+    if verbose:
+        print()  # newline after last batch line
 
     return {
         "train_loss":      total_loss / n_steps,
@@ -178,6 +184,11 @@ def validate(
 # PRINT
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _fmt_eta(secs: float) -> str:
+    m, s = divmod(int(secs), 60)
+    return f"{m}m{s:02d}s" if m else f"{s}s"
+
+
 def print_epoch(
     epoch:      int,
     num_epochs: int,
@@ -185,8 +196,10 @@ def print_epoch(
     val_m:      Dict[str, float],
     elapsed:    float,
     is_best:    bool,
+    eta:        float = 0.0,
 ) -> None:
     star = "  *best*" if is_best else ""
+    eta_str = f"  ETA {_fmt_eta(eta)}" if epoch < num_epochs else ""
     print(
         f"  epoch {epoch:3d}/{num_epochs}"
         f"  trn_loss={train_m['train_loss']:.4f}"
@@ -194,5 +207,6 @@ def print_epoch(
         f"  val_tok={val_m['val_tok_acc']:.3f}"
         f"  val_sent={val_m['val_sent_acc']:.3f}"
         f"  {elapsed:.1f}s"
+        f"{eta_str}"
         f"{star}"
     )
