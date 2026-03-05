@@ -887,104 +887,105 @@ def _build_sample_internal(sample_id: int, cfg: Config) -> dict | None:
         },
     }
 
+if __name__ == "__main__":
+    # ══════════════════════════════════════════════════════════════════════════════
 
-# ══════════════════════════════════════════════════════════════════════════════
+    # ╔══════════════════════════════════════════════════════╗
+    # ║                  U S E R   C O N F I G              ║
+    # ╠══════════════════════════════════════════════════════╣
+    VERBOSE           = True          # True  → print per-sample timings
+    SAVE_EVERY        = 100           # overwrite JSON every N new samples
+    SIMPLIFY_TIMEOUT  = 10            # seconds before skipping a slow sympy call
 
-# ╔══════════════════════════════════════════════════════╗
-# ║                  U S E R   C O N F I G              ║
-# ╠══════════════════════════════════════════════════════╣
-VERBOSE           = True          # True  → print per-sample timings
-SAVE_EVERY        = 100           # overwrite JSON every N new samples
-SIMPLIFY_TIMEOUT  = 10            # seconds before skipping a slow sympy call
+    N_SAMPLES         = 85000           # total samples to generate
 
-N_SAMPLES         = 85000           # total samples to generate
+    SEED              = random.randint(0,1000)+64+84+454
+    OUTPUT_PATH       = "datasets/taylor_dataset.json"
 
-SEED              = random.randint(0,1000)+64+84+454
-OUTPUT_PATH       = "datasets/taylor_dataset.json"
+    cfg = Config(
+        n_ops_range  = (2, 6),        # internal_nodes ∈ [2, 6]
+        max_depth    = 4,
+        max_nodes    = 14,
+        taylor_order = 4,
+        x_bias       = 14.0,           # how much more likely 'x' is vs any single
+                                    # integer constant at each leaf slot.
+                                    #   1.0  → uniform  (~9% x per leaf)
+                                    #   5.0  → ~31% x per leaf  ← recommended
+                                    #  10.0  → ~52% x per leaf
+    )
+    # ╚══════════════════════════════════════════════════════╝
 
-cfg = Config(
-    n_ops_range  = (2, 6),        # internal_nodes ∈ [2, 6]
-    max_depth    = 4,
-    max_nodes    = 14,
-    taylor_order = 4,
-    x_bias       = 14.0,           # how much more likely 'x' is vs any single
-                                  # integer constant at each leaf slot.
-                                  #   1.0  → uniform  (~9% x per leaf)
-                                  #   5.0  → ~31% x per leaf  ← recommended
-                                  #  10.0  → ~52% x per leaf
-)
-# ╚══════════════════════════════════════════════════════╝
+    print("Taylor Series Dataset Generator")
+    print(f"  Config : ops={cfg.n_ops_range}  depth≤{cfg.max_depth}  "
+        f"nodes≤{cfg.max_nodes}  order={cfg.taylor_order}")
+    print(f"  Samples: {N_SAMPLES}   seed={SEED}   save_every={SAVE_EVERY}")
+    print(f"  Output : {OUTPUT_PATH}")
+    print(f"  Timeout: {SIMPLIFY_TIMEOUT}s per sympy call\n")
 
-print("Taylor Series Dataset Generator")
-print(f"  Config : ops={cfg.n_ops_range}  depth≤{cfg.max_depth}  "
-      f"nodes≤{cfg.max_nodes}  order={cfg.taylor_order}")
-print(f"  Samples: {N_SAMPLES}   seed={SEED}   save_every={SAVE_EVERY}")
-print(f"  Output : {OUTPUT_PATH}")
-print(f"  Timeout: {SIMPLIFY_TIMEOUT}s per sympy call\n")
+    # ── 1. Roundtrip sanity test ─────────────────────────────────────────────
+    test_roundtrip(cfg=cfg, n=10, seed=SEED)
 
-# ── 1. Roundtrip sanity test ─────────────────────────────────────────────
-test_roundtrip(cfg=cfg, n=10, seed=SEED)
+    # ── 2. Generate dataset ──────────────────────────────────────────────────
+    t0      = time.perf_counter()
+    dataset = generate_dataset(
+        cfg         = cfg,
+        n_samples   = N_SAMPLES,
+        seed        = SEED,
+        output_path = OUTPUT_PATH,
+    )
+    print(f"\nFinal save → {OUTPUT_PATH}  ({len(dataset)} samples, "
+        f"{time.perf_counter()-t0:.2f}s total)\n")
 
-# ── 2. Generate dataset ──────────────────────────────────────────────────
-t0      = time.perf_counter()
-dataset = generate_dataset(
-    cfg         = cfg,
-    n_samples   = N_SAMPLES,
-    seed        = SEED,
-    output_path = OUTPUT_PATH,
-)
-print(f"\nFinal save → {OUTPUT_PATH}  ({len(dataset)} samples, "
-      f"{time.perf_counter()-t0:.2f}s total)\n")
-
-# ── 3. Benchmark ─────────────────────────────────────────────────────────
-benchmark(cfg=cfg, n_trials=50, seed=SEED)
+    # ── 3. Benchmark ─────────────────────────────────────────────────────────
+    benchmark(cfg=cfg, n_trials=50, seed=SEED)
 
 
-# ╔══════════════════════════════════════════════════════╗
-# ║                  U S E R   C O N F I G              ║
-# ╠══════════════════════════════════════════════════════╣
-VERBOSE           = True          # True  → print per-sample timings
-SAVE_EVERY        = 100           # overwrite JSON every N new samples
-SIMPLIFY_TIMEOUT  = 10            # seconds before skipping a slow sympy call
+    # ╔══════════════════════════════════════════════════════╗
+    # ║                  U S E R   C O N F I G              ║
+    # ╠══════════════════════════════════════════════════════╣
+    VERBOSE           = True          # True  → print per-sample timings
+    SAVE_EVERY        = 100           # overwrite JSON every N new samples
+    SIMPLIFY_TIMEOUT  = 10            # seconds before skipping a slow sympy call
 
-N_SAMPLES         = 10000           # total samples to generate
+    N_SAMPLES         = 10000           # total samples to generate
 
-SEED              = random.randint(0,100000)
-OUTPUT_PATH       = "datasets/taylor_dataset.json"
+    SEED              = random.randint(0,100000)
+    OUTPUT_PATH       = "datasets/taylor_dataset.json"
 
-cfg = Config(
-    n_ops_range  = (2, 6),        # internal_nodes ∈ [2, 6]
-    max_depth    = 4,
-    max_nodes    = 15,
-    taylor_order = 4,
-    x_bias       = 5.0,           # how much more likely 'x' is vs any single
-                                  # integer constant at each leaf slot.
-                                  #   1.0  → uniform  (~9% x per leaf)
-                                  #   5.0  → ~31% x per leaf  ← recommended
-                                  #  10.0  → ~52% x per leaf
-)
-# ╚══════════════════════════════════════════════════════╝
+    cfg = Config(
+        n_ops_range  = (2, 6),        # internal_nodes ∈ [2, 6]
+        max_depth    = 4,
+        max_nodes    = 15,
+        taylor_order = 4,
+        x_bias       = 5.0,           # how much more likely 'x' is vs any single
+                                    # integer constant at each leaf slot.
+                                    #   1.0  → uniform  (~9% x per leaf)
+                                    #   5.0  → ~31% x per leaf  ← recommended
+                                    #  10.0  → ~52% x per leaf
+    )
+    # ╚══════════════════════════════════════════════════════╝
 
-print("Taylor Series Dataset Generator")
-print(f"  Config : ops={cfg.n_ops_range}  depth≤{cfg.max_depth}  "
-      f"nodes≤{cfg.max_nodes}  order={cfg.taylor_order}")
-print(f"  Samples: {N_SAMPLES}   seed={SEED}   save_every={SAVE_EVERY}")
-print(f"  Output : {OUTPUT_PATH}")
-print(f"  Timeout: {SIMPLIFY_TIMEOUT}s per sympy call\n")
+    print("Taylor Series Dataset Generator")
+    print(f"  Config : ops={cfg.n_ops_range}  depth≤{cfg.max_depth}  "
+        f"nodes≤{cfg.max_nodes}  order={cfg.taylor_order}")
+    print(f"  Samples: {N_SAMPLES}   seed={SEED}   save_every={SAVE_EVERY}")
+    print(f"  Output : {OUTPUT_PATH}")
+    print(f"  Timeout: {SIMPLIFY_TIMEOUT}s per sympy call\n")
 
-# ── 1. Roundtrip sanity test ─────────────────────────────────────────────
-test_roundtrip(cfg=cfg, n=10, seed=SEED)
+    # ── 1. Roundtrip sanity test ─────────────────────────────────────────────
+    test_roundtrip(cfg=cfg, n=10, seed=SEED)
 
-# ── 2. Generate dataset ──────────────────────────────────────────────────
-t0      = time.perf_counter()
-dataset = generate_dataset(
-    cfg         = cfg,
-    n_samples   = N_SAMPLES,
-    seed        = SEED,
-    output_path = OUTPUT_PATH,
-)
-print(f"\nFinal save → {OUTPUT_PATH}  ({len(dataset)} samples, "
-      f"{time.perf_counter()-t0:.2f}s total)\n")
+    # ── 2. Generate dataset ──────────────────────────────────────────────────
+    t0      = time.perf_counter()
+    dataset = generate_dataset(
+        cfg         = cfg,
+        n_samples   = N_SAMPLES,
+        seed        = SEED,
+        output_path = OUTPUT_PATH,
+    )
+    print(f"\nFinal save → {OUTPUT_PATH}  ({len(dataset)} samples, "
+        f"{time.perf_counter()-t0:.2f}s total)\n")
 
-# ── 3. Benchmark ─────────────────────────────────────────────────────────
-benchmark(cfg=cfg, n_trials=50, seed=SEED)
+    # ── 3. Benchmark ─────────────────────────────────────────────────────────
+    benchmark(cfg=cfg, n_trials=50, seed=SEED)
+
