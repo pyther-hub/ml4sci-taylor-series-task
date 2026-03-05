@@ -58,9 +58,10 @@ def build_dataloaders(
     seed:        int,
     batch_size:  int,
     num_workers: int,
+    max_seq_len: int = None,
 ) -> Tuple[DataLoader, DataLoader, CoeffPredDataset]:
     """Load the dataset and return train / val DataLoaders + the full dataset."""
-    full_ds = CoeffPredDataset(json_path)
+    full_ds = CoeffPredDataset(json_path, max_seq_len=max_seq_len)
     n_val   = max(1, int(len(full_ds) * val_ratio))
     n_train = len(full_ds) - n_val
 

@@ -118,7 +118,9 @@ class CoeffPredDataset(Dataset):
         self,
         json_path: str,
         skip_unk: bool = True,
+        max_seq_len: Optional[int] = None,
     ):
+        self.max_seq_len = max_seq_len
         with open(json_path) as fh:
             raw = json.load(fh)
 
@@ -169,6 +171,10 @@ class CoeffPredDataset(Dataset):
     ]:
         """Pad a batch of (src, tgt) items into dense tensors."""
         srcs, tgts = zip(*batch)
+
+        if self.max_seq_len is not None:
+            srcs = [s[:self.max_seq_len - 1] + [EOS_ID] if len(s) > self.max_seq_len else s for s in srcs]
+            tgts = [t[:self.max_seq_len - 1] + [EOS_ID] if len(t) > self.max_seq_len else t for t in tgts]
 
         src_lengths = torch.tensor([len(s) for s in srcs], dtype=torch.long)
         tgt_lengths = torch.tensor([len(t) for t in tgts], dtype=torch.long)

@@ -132,6 +132,7 @@ if __name__ == "__main__":
     # ── Data ──────────────────────────────────────────────────────────────────
     train_loader, val_loader, full_ds = build_dataloaders(
         DATASET_JSON, VAL_RATIO, RANDOM_SEED, BATCH_SIZE, NUM_WORKERS,
+        max_seq_len=MAX_SEQ_LEN,
     )
     print(f"\n  Dataset  : {len(full_ds)} items  (skipped={full_ds.n_skipped})")
     print(f"  Train    : {len(train_loader.dataset)}   Val : {len(val_loader.dataset)}\n")
