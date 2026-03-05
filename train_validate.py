@@ -106,12 +106,9 @@ def train_epoch(
     total_loss  = 0.0
     total_tok   = 0.0
     total_sent  = 0.0
-    n_steps     = len(loader)
-    print_every = max(1, n_steps // 10)
+    n_steps = len(loader)
 
     for step, (src, tgt, _, _) in enumerate(loader, 1):
-        t_step = time.perf_counter()
-
         src, tgt = src.to(device), tgt.to(device)
 
         optimizer.zero_grad()
@@ -129,17 +126,6 @@ def train_epoch(
         total_tok  += m["token_acc"]
         total_sent += m["sentence_acc"]
 
-        if step % print_every == 0 or step == n_steps:
-            step_time = time.perf_counter() - t_step
-            left      = n_steps - step
-            print(
-                f"  [train] step {step:4d}/{n_steps}"
-                f"  left={left:4d}"
-                f"  loss={total_loss / step:.4f}"
-                f"  tok={total_tok / step:.3f}"
-                f"  sent={total_sent / step:.3f}"
-                f"  ({step_time:.2f}s/step)"
-            )
 
     return {
         "train_loss":      total_loss / n_steps,
