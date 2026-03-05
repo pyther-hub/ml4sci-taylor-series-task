@@ -91,7 +91,7 @@ def save_checkpoint(
 if __name__ == "__main__":
 
     # ── Paths ─────────────────────────────────────────────────────────────────
-    DATASET_JSON    = os.path.join("datasets", "taylor_dataset_cleaned_4.json")
+    DATASET_JSON    = os.path.join("datasets", "taylor_dataset_10k.json")
     CHECKPOINT_DIR  = "checkpoints"
     CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, "unified_best.pt")
 
@@ -113,7 +113,7 @@ if __name__ == "__main__":
     NUM_DECODER_LAYERS = 3
     DIM_FEEDFORWARD    = 256
     DROPOUT            = 0.1
-    MAX_SEQ_LEN        = 1024
+    MAX_SEQ_LEN        = 2048
 
     # ── Post-training evaluation ──────────────────────────────────────────────
     MAX_GEN_LEN = 768          # max decode steps for post-training greedy eval
