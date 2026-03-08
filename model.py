@@ -305,43 +305,307 @@ class CoeffPredTransformer(nn.Module):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# 3.  SMOKE TEST
+# 3.  LSTM SEQ2SEQ WITH ATTENTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+class BahdanauAttention(nn.Module):
+    """Additive (Bahdanau) attention over encoder outputs."""
+
+    def __init__(self, enc_dim: int, dec_dim: int):
+        super().__init__()
+        self.W_enc = nn.Linear(enc_dim, dec_dim, bias=False)
+        self.W_dec = nn.Linear(dec_dim, dec_dim, bias=False)
+        self.v     = nn.Linear(dec_dim, 1, bias=False)
+
+    def forward(
+        self,
+        decoder_hidden: torch.Tensor,   # (B, dec_dim)
+        encoder_outputs: torch.Tensor,  # (B, S, enc_dim)
+        mask: torch.Tensor,             # (B, S) True where PAD
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns
+        -------
+        context : (B, enc_dim)
+        weights : (B, S)
+        """
+        # (B, S, dec_dim) + (B, 1, dec_dim)
+        energy = torch.tanh(
+            self.W_enc(encoder_outputs) + self.W_dec(decoder_hidden).unsqueeze(1)
+        )
+        scores = self.v(energy).squeeze(-1)            # (B, S)
+        scores = scores.masked_fill(mask, float("-inf"))
+        weights = torch.softmax(scores, dim=-1)        # (B, S)
+        context = torch.bmm(weights.unsqueeze(1), encoder_outputs).squeeze(1)  # (B, enc_dim)
+        return context, weights
+
+
+class CoeffPredLSTM(nn.Module):
+    """LSTM Seq2Seq with Bahdanau attention for Taylor coefficient prediction.
+
+    Public interface matches CoeffPredTransformer:
+      forward(src, tgt)            -> logits (B, tgt_len-1, VOCAB_SIZE)
+      generate_batch(src, max_len) -> List[List[int]]
+      generate(src, max_len)       -> List[int]
+
+    Parameters
+    ----------
+    d_model            : embedding dimension
+    hidden_size        : LSTM hidden size
+    num_encoder_layers : encoder LSTM layers
+    num_decoder_layers : decoder LSTM layers
+    dropout            : dropout rate
+    max_seq_len        : unused, kept for config consistency
+    """
+
+    def __init__(
+        self,
+        d_model:            int   = 256,
+        hidden_size:        int   = 256,
+        num_encoder_layers: int   = 2,
+        num_decoder_layers: int   = 2,
+        dropout:            float = 0.1,
+        max_seq_len:        int   = 512,
+    ):
+        super().__init__()
+        self.d_model     = d_model
+        self.hidden_size = hidden_size
+        self.num_decoder_layers = num_decoder_layers
+
+        # Shared embedding
+        self.embedding = nn.Embedding(VOCAB_SIZE, d_model, padding_idx=PAD_ID)
+
+        # Bidirectional encoder
+        self.encoder = nn.LSTM(
+            d_model, hidden_size, num_encoder_layers,
+            batch_first=True, bidirectional=True, dropout=dropout if num_encoder_layers > 1 else 0,
+        )
+        enc_out_dim = hidden_size * 2  # bidirectional
+
+        # Project encoder final states to decoder initial states
+        self.h_proj = nn.Linear(hidden_size * 2, hidden_size)
+        self.c_proj = nn.Linear(hidden_size * 2, hidden_size)
+
+        # Attention
+        self.attention = BahdanauAttention(enc_out_dim, hidden_size)
+
+        # Decoder LSTM: input = embedding + context
+        self.decoder = nn.LSTM(
+            d_model + enc_out_dim, hidden_size, num_decoder_layers,
+            batch_first=True, dropout=dropout if num_decoder_layers > 1 else 0,
+        )
+        self.dropout = nn.Dropout(dropout)
+
+        # Output projection (weight-tied to embedding)
+        self.fc_out = nn.Linear(d_model, VOCAB_SIZE, bias=False)
+        self.fc_out.weight = self.embedding.weight
+
+        # Project decoder output to d_model if hidden_size != d_model
+        if hidden_size != d_model:
+            self.out_proj = nn.Linear(hidden_size, d_model, bias=False)
+        else:
+            self.out_proj = None
+
+        self._init_weights()
+
+    def _init_weights(self) -> None:
+        nn.init.normal_(self.embedding.weight, mean=0.0, std=self.d_model ** -0.5)
+        with torch.no_grad():
+            self.embedding.weight[PAD_ID].fill_(0)
+
+    def _encode(self, src: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor, Tuple]:
+        """Encode source.
+
+        Returns
+        -------
+        enc_outputs  : (B, S, 2*hidden)
+        src_pad_mask : (B, S) True where PAD
+        dec_init     : (h0, c0) each (num_decoder_layers, B, hidden)
+        """
+        src_pad_mask = src == PAD_ID
+        emb = self.dropout(self.embedding(src))  # (B, S, d_model)
+
+        # Pack for efficiency
+        lengths = (~src_pad_mask).sum(dim=1).cpu().clamp(min=1)
+        packed = nn.utils.rnn.pack_padded_sequence(
+            emb, lengths, batch_first=True, enforce_sorted=False,
+        )
+        enc_out, (h_n, c_n) = self.encoder(packed)
+        enc_out, _ = nn.utils.rnn.pad_packed_sequence(enc_out, batch_first=True)  # (B, S, 2*H)
+
+        # h_n: (2*num_enc_layers, B, H) — concat forward/backward for each layer
+        # Take the top layer's forward and backward hidden states
+        num_enc_layers = h_n.shape[0] // 2
+        h_fwd = h_n[2 * num_enc_layers - 2]  # top layer forward
+        h_bwd = h_n[2 * num_enc_layers - 1]  # top layer backward
+        c_fwd = c_n[2 * num_enc_layers - 2]
+        c_bwd = c_n[2 * num_enc_layers - 1]
+
+        h_cat = torch.cat([h_fwd, h_bwd], dim=-1)  # (B, 2*H)
+        c_cat = torch.cat([c_fwd, c_bwd], dim=-1)
+
+        h0 = torch.tanh(self.h_proj(h_cat))  # (B, H)
+        c0 = torch.tanh(self.c_proj(c_cat))
+
+        # Expand for all decoder layers
+        h0 = h0.unsqueeze(0).expand(self.num_decoder_layers, -1, -1).contiguous()
+        c0 = c0.unsqueeze(0).expand(self.num_decoder_layers, -1, -1).contiguous()
+
+        return enc_out, src_pad_mask, (h0, c0)
+
+    def forward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+        """Teacher-forced forward pass.
+
+        Parameters
+        ----------
+        src : (B, src_len)
+        tgt : (B, tgt_len)
+
+        Returns
+        -------
+        logits : (B, tgt_len-1, VOCAB_SIZE)
+        """
+        tgt_in = tgt[:, :-1]  # (B, T-1)
+        B, T = tgt_in.shape
+
+        enc_out, src_pad_mask, (h, c) = self._encode(src)
+        tgt_emb = self.dropout(self.embedding(tgt_in))  # (B, T, d_model)
+
+        outputs = []
+        for t in range(T):
+            # Attention context from top decoder hidden layer
+            context, _ = self.attention(h[-1], enc_out, src_pad_mask)  # (B, 2*H)
+            # Decoder input: concat embedding + context
+            dec_input = torch.cat([tgt_emb[:, t:t+1, :],
+                                   context.unsqueeze(1)], dim=-1)  # (B, 1, d_model+2*H)
+            dec_out, (h, c) = self.decoder(dec_input, (h, c))  # (B, 1, H)
+            outputs.append(dec_out)
+
+        out = torch.cat(outputs, dim=1)  # (B, T, H)
+        if self.out_proj is not None:
+            out = self.out_proj(out)
+        return self.fc_out(out)  # (B, T, V)
+
+    @torch.inference_mode()
+    def generate_batch(
+        self,
+        src: torch.Tensor,
+        max_len: int = 256,
+    ) -> List[List[int]]:
+        """Greedy decode a batch.
+
+        Parameters
+        ----------
+        src     : (B, src_len)
+        max_len : maximum tokens to generate
+
+        Returns
+        -------
+        List of length B — each element is the predicted token ID list.
+        """
+        device = src.device
+        B = src.shape[0]
+
+        enc_out, src_pad_mask, (h, c) = self._encode(src)
+
+        cur_token = torch.full((B, 1), SOS_ID, dtype=torch.long, device=device)
+        finished  = torch.zeros(B, dtype=torch.bool, device=device)
+        outputs   = [[] for _ in range(B)]
+
+        for _ in range(max_len):
+            emb = self.embedding(cur_token)  # (B, 1, d_model)
+            context, _ = self.attention(h[-1], enc_out, src_pad_mask)
+            dec_input = torch.cat([emb, context.unsqueeze(1)], dim=-1)
+            dec_out, (h, c) = self.decoder(dec_input, (h, c))  # (B, 1, H)
+
+            proj = dec_out
+            if self.out_proj is not None:
+                proj = self.out_proj(proj)
+            logits = self.fc_out(proj[:, 0, :])  # (B, V)
+            next_ids = logits.argmax(dim=-1)      # (B,)
+            next_ids = next_ids.masked_fill(finished, PAD_ID)
+
+            for i in range(B):
+                if not finished[i]:
+                    tid = next_ids[i].item()
+                    outputs[i].append(tid)
+                    if tid == EOS_ID:
+                        finished[i] = True
+
+            cur_token = next_ids.unsqueeze(1)
+            if finished.all():
+                break
+
+        return outputs
+
+    @torch.inference_mode()
+    def generate(
+        self,
+        src: torch.Tensor,
+        max_len: int = 256,
+    ) -> List[int]:
+        """Greedy decode a single sample."""
+        return self.generate_batch(src, max_len=max_len)[0]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 4.  SMOKE TEST
 # ══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
     device = torch.device("cpu")
-
-    model = CoeffPredTransformer(
-        d_model=64, nhead=4,
-        num_encoder_layers=2, num_decoder_layers=2,
-        dim_feedforward=128, dropout=0.1,
-    ).to(device)
-
-    total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print(f"VOCAB_SIZE   : {VOCAB_SIZE}")
-    print(f"Trainable params: {total_params:,}")
-
     B, S, T = 4, 12, 10
-    src = torch.randint(1, VOCAB_SIZE, (B, S)).to(device)
-    tgt = torch.randint(1, VOCAB_SIZE, (B, T)).to(device)
-    src[:, 0] = SOS_ID; src[:, -1] = EOS_ID
-    tgt[:, 0] = SOS_ID; tgt[:, -1] = EOS_ID
 
-    # Forward
-    logits = model(src, tgt)
-    assert logits.shape == (B, T - 1, VOCAB_SIZE), f"Got {logits.shape}"
-    print(f"forward logits : {logits.shape}  ✓")
+    def _make_dummy_data():
+        src = torch.randint(1, VOCAB_SIZE, (B, S)).to(device)
+        tgt = torch.randint(1, VOCAB_SIZE, (B, T)).to(device)
+        src[:, 0] = SOS_ID; src[:, -1] = EOS_ID
+        tgt[:, 0] = SOS_ID; tgt[:, -1] = EOS_ID
+        return src, tgt
 
-    # generate_batch
-    model.eval()
-    results = model.generate_batch(src, max_len=20)
-    assert len(results) == B
-    print(f"generate_batch : {len(results)} sequences  ✓")
-    for i, r in enumerate(results):
-        print(f"  [{i}] {r[:8]}{'...' if len(r) > 8 else ''}")
+    def _test_model(model, name):
+        print(f"\n{'=' * 50}")
+        print(f"  Smoke test: {name}")
+        print(f"{'=' * 50}")
+        total_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+        print(f"VOCAB_SIZE     : {VOCAB_SIZE}")
+        print(f"Trainable params: {total_params:,}")
 
-    # generate (single)
-    ids = model.generate(src[:1], max_len=20)
-    print(f"generate (1)   : {ids[:8]}  ✓")
+        src, tgt = _make_dummy_data()
 
-    print("\nSmoke test passed.")
+        logits = model(src, tgt)
+        assert logits.shape == (B, T - 1, VOCAB_SIZE), f"Got {logits.shape}"
+        print(f"forward logits : {logits.shape}  ✓")
+
+        model.eval()
+        results = model.generate_batch(src, max_len=20)
+        assert len(results) == B
+        print(f"generate_batch : {len(results)} sequences  ✓")
+        for i, r in enumerate(results):
+            print(f"  [{i}] {r[:8]}{'...' if len(r) > 8 else ''}")
+
+        ids = model.generate(src[:1], max_len=20)
+        print(f"generate (1)   : {ids[:8]}  ✓")
+        print(f"  {name} smoke test passed.")
+
+    # Test Transformer
+    _test_model(
+        CoeffPredTransformer(
+            d_model=64, nhead=4,
+            num_encoder_layers=2, num_decoder_layers=2,
+            dim_feedforward=128, dropout=0.1,
+        ).to(device),
+        "CoeffPredTransformer",
+    )
+
+    # Test LSTM
+    _test_model(
+        CoeffPredLSTM(
+            d_model=64, hidden_size=64,
+            num_encoder_layers=2, num_decoder_layers=2,
+            dropout=0.1,
+        ).to(device),
+        "CoeffPredLSTM",
+    )
+
+    print("\nAll smoke tests passed.")

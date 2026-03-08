@@ -3,25 +3,32 @@ import sympy as sp
 
 from dataset import EOS_ID, PAD_ID, SOS_ID, VOCAB_SIZE, encode, decode
 from dataset_generation import _expr_to_prefix_tokens, prefix_tokens_to_infix
-from model import CoeffPredTransformer
+from model import CoeffPredLSTM, CoeffPredTransformer
 
+MODEL_CLASSES = {
+    "transformer": CoeffPredTransformer,
+    "lstm":        CoeffPredLSTM,
+}
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DEFAULT_CHECKPOINT = "models/v4_128_op_epoch_010.pt"
 MAX_GEN_LEN        = 128
 
 
-def load_model(checkpoint_path: str, device: torch.device) -> CoeffPredTransformer:
+def load_model(checkpoint_path: str, device: torch.device):
     """Load model weights and architecture from a checkpoint file."""
     ckpt = torch.load(checkpoint_path, map_location=device, weights_only=True)
     cfg  = ckpt["config"]
+    model_type = ckpt.get("model_type", "transformer")  # backward compat
 
-    model = CoeffPredTransformer(**cfg)
+    cls   = MODEL_CLASSES[model_type]
+    model = cls(**cfg)
     model.load_state_dict(ckpt["model_state"])
     model.to(device)
     model.eval()
 
     print(f"  Loaded checkpoint : {checkpoint_path}")
+    print(f"  Model type        : {model_type}")
     print(f"  Epoch             : {ckpt.get('epoch', '?')}")
     print(f"  Val loss          : {ckpt.get('val_loss', float('nan')):.6f}")
     print(f"  N coefficients    : {ckpt.get('n_coeffs', '?')}\n")
