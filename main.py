@@ -167,8 +167,7 @@ TRANSFORMER_CONFIG = {
     "num_encoder_layers": 6,
     "num_decoder_layers": 8,
     "dim_feedforward": 256,
-    "dropout": 0.1,
-    "max_seq_len": 512,
+    "dropout": 0.1
 }
 
 LSTM_CONFIG = {
@@ -176,9 +175,9 @@ LSTM_CONFIG = {
     "hidden_size": 256,
     "num_encoder_layers": 2,
     "num_decoder_layers": 2,
-    "dropout": 0.1,
-    "max_seq_len": 512,
+    "dropout": 0.1
 }
+
 
 # ── Paths ─────────────────────────────────────────────────────────────────
 DATASET_JSON    = os.path.join("", "/kaggle/input/datasets/tensorpanda231/taylor-series-dataset-simple/taylor_dataset_10k.json")
@@ -200,6 +199,7 @@ NUM_WORKERS = 0
 # ── Post-training evaluation ──────────────────────────────────────────────
 MAX_GEN_LEN = 512          # max decode steps for post-training greedy eval
 EVALUATE_ON_EVAL_FUNCTIONS_AFTER = 5  # run eval on EVAL_FUNCTIONS every N epochs
+MAX_SEQ_LEN = 512
 
 
 
@@ -241,7 +241,8 @@ best_val_loss = float("inf")
 
 for epoch in range(1, NUM_EPOCHS + 1):
     t0      = time.perf_counter()
-    train_m = train_epoch(model, train_loader, optimizer, criterion, device, CLIP_GRAD)
+    train_m = train_epoch(model, train_loader, optimizer, criterion, device, CLIP_GRAD,
+                          log_every=10 if epoch == 1 else 0)
     val_m   = validate(model, val_loader, criterion, device)
     scheduler.step()
 

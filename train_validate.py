@@ -96,6 +96,7 @@ def train_epoch(
     device:    torch.device,
     clip_grad: float,
     verbose:   bool = False,
+    log_every: int  = 0,
 ) -> Dict[str, float]:
     """One full training epoch with teacher-forced loss and greedy-decode metrics."""
     import time as _time
@@ -105,7 +106,7 @@ def train_epoch(
     total_tok   = 0.0
     total_sent  = 0.0
     n_steps = len(loader)
-    _t0 = _time.perf_counter() if verbose else None
+    _t0 = _time.perf_counter() if (verbose or log_every > 0) else None
 
     for step, (src, tgt, _, _) in enumerate(loader, 1):
         src, tgt = src.to(device), tgt.to(device)
@@ -129,6 +130,21 @@ def train_epoch(
             elapsed = _time.perf_counter() - _t0
             eta = elapsed / step * (n_steps - step)
             print(f"\r    batch {step:4d}/{n_steps}  elapsed={elapsed:.1f}s  ETA ~{_fmt_eta(eta)}   ", end="", flush=True)
+
+        if log_every > 0 and step % log_every == 0:
+            elapsed = _time.perf_counter() - _t0
+            avg_loss = total_loss / step
+            avg_tok  = total_tok  / step
+            avg_sent = total_sent / step
+            eta = elapsed / step * (n_steps - step)
+            print(
+                f"    step {step:4d}/{n_steps}"
+                f"  loss={avg_loss:.4f}"
+                f"  tok_acc={avg_tok:.3f}"
+                f"  sent_acc={avg_sent:.3f}"
+                f"  elapsed={elapsed:.1f}s"
+                f"  ETA ~{_fmt_eta(eta)}"
+            )
 
     if verbose:
         print()  # newline after last batch line
