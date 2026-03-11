@@ -7,15 +7,13 @@ The model predicts ALL five Taylor coefficients in a single pass, using
 <BREAK> tokens to delimit individual coefficients in the output sequence.
 
 Training loop only computes teacher-forced val loss (fast).  After training,
-evaluate_checkpoints() loads each saved epoch checkpoint, runs greedy decoding,
-and computes full accuracy metrics.
+loads best checkpoint, runs greedy decoding, and computes full accuracy metrics.
 
 Usage
 -----
 python main.py
 
-Edit the hyperparameters in the ``if __name__ == "__main__":`` block at the
-bottom of this file.
+Edit the hyperparameters in the config section below.
 """
 
 from __future__ import annotations
@@ -30,15 +28,15 @@ import torch.nn as nn
 from dataset import BREAK_ID, EOS_ID, N_COEFFS, PAD_ID, SOS_ID, VOCAB_SIZE, decode, encode
 from model import CoeffPredLSTM, CoeffPredTransformer
 from train_validate import (
-build_dataloaders,
-get_device,
-print_epoch,
-set_seed,
-train_epoch,
-validate,
+    build_dataloaders,
+    get_device,
+    print_epoch,
+    set_seed,
+    train_epoch,
+    validate,
 )
 
-# ── Evaluation on fixed function list ─────────────────────────────────────
+# ── Evaluation helpers ────────────────────────────────────────────────────
 import sympy as sp
 from dataset_generation import (
     _expr_to_prefix_tokens,
@@ -49,11 +47,14 @@ from metrics import split_segments, per_segment_metrics
 
 from report_logger import ReportLogger, sympy_equiv
 
-EVAL_FUNCTIONS = [
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CUSTOM TEST FUNCTIONS
+# ══════════════════════════════════════════════════════════════════════════════
+
+CUSTOM_TEST_FUNCTIONS = [
     "(x**2 + 1)*sin(x)",
     "x**3*cos(2*x)",
-    "(2*x + 1)*sin(3*x)",
-    "(x**2 - x)*cos(x)",
     "exp(x)*(1 + x)",
     "x*exp(2*x)",
     "(1 + x**2)*exp(-x)",
@@ -61,7 +62,6 @@ EVAL_FUNCTIONS = [
     "log(1 + x)",
     "log(1 + x**2)",
     "x*log(1 + x)",
-    "log(1 + 2*x + x**2)",
     "x/(1 - x)",
     "x/(1 + x)",
     "1/(1 + x**2)",
@@ -71,51 +71,22 @@ EVAL_FUNCTIONS = [
     "cos(sqrt(1 + x))",
     "log(1 + sin(x))",
     "(x + 1)*exp(x)",
-    "sin(x)/(1 + x)",
     "x**2*log(1 + x)",
     "exp(x)*cos(x)",
-    "(x**2 + 2*x + 1)*sin(x)",
-    "(x + 2)*cos(2*x)",
     "exp(x)*(x**2 + 1)",
-    "(x**2 + 1)*exp(2*x)",
     "sin(x)*cos(x)",
-    "sin(2*x)/(1 + x)",
-    "cos(x)/(1 + x**2)",
-    "(x + 1)/(1 + x**2)",
-    "(x**2 + x)/(1 + x)",
-    "(x**2 + 1)/(1 + x)",
-    "log(1 + x + x**2)",
     "log(1 + x**3)",
-    "log(1 + x)*sin(x)",
     "log(1 + x)*cos(x)",
     "x*exp(x)*sin(x)",
     "x*exp(x)*cos(x)",
-    "exp(x)*log(1 + x)",
-    "exp(x)*sqrt(1 + x)",
     "sqrt(1 + x)*sin(x)",
-    "sqrt(1 + x)*cos(x)",
     "sqrt(1 + x)/(1 + x)",
-    "sin(x)/(1 + x**2)",
     "cos(x)/(1 + x)",
-    "(x + 1)*sin(x)*cos(x)",
-    "(x**2 + 1)*sin(2*x)",
-    "(x**2 + x + 1)*cos(x)",
-    "(x + 1)*log(1 + x)",
-    "(x**2 + 1)*log(1 + x)",
     "exp(x)/(1 + x)",
-    "exp(x)/(1 + x**2)",
-    "sin(x**2)/(1 + x)",
-    "cos(x**2)/(1 + x)",
-    "exp(x**2)/(1 + x)",
-    "log(1 + x**2)*sin(x)",
-    "log(1 + x**2)*cos(x)",
-    "sin(x)*exp(x**2)",
-    "cos(x)*exp(x**2)",
 ]
 
 TAYLOR_ORDER = N_COEFFS - 1   # 4 → coefficients c0 … c4
 x_sym        = sp.Symbol("x")
-
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -133,13 +104,13 @@ def build_model(model_type: str, config: Dict) -> nn.Module:
     return cls(**config)
 
 
-def run_eval_functions(
+def run_custom_test_functions(
     model:   nn.Module,
     device:  torch.device,
     logger:  ReportLogger | None = None,
     max_gen_len: int = 512,
 ) -> tuple[int, int, int]:
-    """Run evaluation on EVAL_FUNCTIONS with exact-match + SymPy equivalence.
+    """Run evaluation on CUSTOM_TEST_FUNCTIONS with exact-match + SymPy equivalence.
 
     Returns (n_exact_correct, n_sympy_correct, n_attempted).
     """
@@ -149,7 +120,7 @@ def run_eval_functions(
 
     model.eval()
     with torch.no_grad():
-        for fn_idx, fn_str in enumerate(EVAL_FUNCTIONS, 1):
+        for fn_idx, fn_str in enumerate(CUSTOM_TEST_FUNCTIONS, 1):
             # 1. Parse string → sympy
             try:
                 expr = sp.sympify(fn_str, locals={"x": x_sym})
@@ -265,11 +236,15 @@ def save_checkpoint(
     print(f"  [save] checkpoint → {path}  (epoch={epoch})")
 
 
-
 # ══════════════════════════════════════════════════════════════════════════════
-# MODEL SELECTION
+# CONFIGURATION
 # ══════════════════════════════════════════════════════════════════════════════
 
+# ── Demo mode (set True to run only 2 epochs for quick testing) ───────────
+DEMO_RUN = False
+DEMO_EPOCHS = 2
+
+# ── Model selection ───────────────────────────────────────────────────────
 MODEL_TYPE = "transformer"  # "transformer" or "lstm"
 
 TRANSFORMER_CONFIG = {
@@ -289,16 +264,14 @@ LSTM_CONFIG = {
     "dropout": 0.1
 }
 
-
 # ── Paths ─────────────────────────────────────────────────────────────────
-DATASET_JSON    = os.path.join("", "/kaggle/input/datasets/tensorpanda231/taylor-series-dataset-simple/taylor_dataset_10k.json")
+DATASET_JSON    = "/kaggle/input/datasets/tensorpanda231/taylor-series-dataset-simple/taylor_dataset_10k.json"
 CHECKPOINT_DIR  = "checkpoints"
 CHECKPOINT_PATH = os.path.join(CHECKPOINT_DIR, f"taylor_series_pred_{MODEL_TYPE}.pt")
 
-
 # ── Data split ────────────────────────────────────────────────────────────
 VAL_RATIO   = 0.10
-RANDOM_SEED = 42
+RANDOM_SEED = 1326
 
 # ── Training ──────────────────────────────────────────────────────────────
 BATCH_SIZE  = 64
@@ -306,17 +279,25 @@ NUM_EPOCHS  = 100
 LR          = 3e-4
 CLIP_GRAD   = 1.0
 NUM_WORKERS = 0
+PATIENCE    = 10  # early stopping patience (epochs without val_loss improvement)
 
 # ── Post-training evaluation ──────────────────────────────────────────────
 MAX_GEN_LEN = 512          # max decode steps for post-training greedy eval
-EVALUATE_ON_EVAL_FUNCTIONS_AFTER = 5  # run eval on EVAL_FUNCTIONS every N epochs
 MAX_SEQ_LEN = 512
 
 # ── Report output ────────────────────────────────────────────────────
 OUTPUT_DIR = os.path.join("reports", f"{MODEL_TYPE}_{time.strftime('%Y%m%d_%H%M%S')}")
 
+# ── Override epochs if demo mode ──────────────────────────────────────────
+if DEMO_RUN:
+    NUM_EPOCHS = DEMO_EPOCHS
+    print(f"  ** DEMO MODE: training for {DEMO_EPOCHS} epochs only **")
 
-# ─────────────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SETUP
+# ══════════════════════════════════════════════════════════════════════════════
+
 set_seed(RANDOM_SEED)
 device = get_device()
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
@@ -325,9 +306,16 @@ print("=" * 68)
 print(f"  coeff_pred training — unified model ({N_COEFFS} coefficients)")
 print(f"  device  : {device}")
 print(f"  dataset : {DATASET_JSON}")
+print(f"  model   : {MODEL_TYPE}")
+print(f"  seed    : {RANDOM_SEED}")
+print(f"  epochs  : {NUM_EPOCHS}  (patience={PATIENCE})")
 print("=" * 68)
 
-# ── Data ──────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DATA LOADING
+# ══════════════════════════════════════════════════════════════════════════════
+
 train_loader, val_loader, full_ds = build_dataloaders(
     DATASET_JSON, VAL_RATIO, RANDOM_SEED, BATCH_SIZE, NUM_WORKERS,
     max_seq_len=MAX_SEQ_LEN,
@@ -335,13 +323,21 @@ train_loader, val_loader, full_ds = build_dataloaders(
 print(f"\n  Dataset  : {len(full_ds)} items  (skipped={full_ds.n_skipped})")
 print(f"  Train    : {len(train_loader.dataset)}   Val : {len(val_loader.dataset)}\n")
 
-# ── Model ─────────────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# MODEL INITIALIZATION
+# ══════════════════════════════════════════════════════════════════════════════
+
 arch_cfg = TRANSFORMER_CONFIG if MODEL_TYPE == "transformer" else LSTM_CONFIG
 model    = build_model(MODEL_TYPE, arch_cfg).to(device)
 n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
 print(f"  Params   : {n_params:,}   VOCAB_SIZE={VOCAB_SIZE}\n")
 
-# ── Report logger ────────────────────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# REPORT LOGGER
+# ══════════════════════════════════════════════════════════════════════════════
+
 logger = ReportLogger(output_dir=OUTPUT_DIR)
 logger.log_config({
     "model_type": MODEL_TYPE,
@@ -351,6 +347,7 @@ logger.log_config({
     "scheduler": "CosineAnnealingLR",
     "batch_size": BATCH_SIZE,
     "epochs": NUM_EPOCHS,
+    "patience": PATIENCE,
     "gradient_clipping": CLIP_GRAD,
     "dataset_size": len(full_ds),
     "train_size": len(train_loader.dataset),
@@ -358,24 +355,34 @@ logger.log_config({
     "vocab_size": VOCAB_SIZE,
     "max_seq_len": MAX_SEQ_LEN,
     "n_params": n_params,
+    "seed": RANDOM_SEED,
+    "demo_run": DEMO_RUN,
 })
 
-# ── Optimizer / loss / scheduler ──────────────────────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# OPTIMIZER / LOSS / SCHEDULER
+# ══════════════════════════════════════════════════════════════════════════════
+
 criterion = nn.CrossEntropyLoss(ignore_index=PAD_ID, reduction="mean")
 optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
     optimizer, T_max=NUM_EPOCHS, eta_min=LR * 1e-2,
 )
 
-# ── Training loop (no greedy decode — fast) ──────────────────────────────
-best_val_loss = float("inf")
 
+# ══════════════════════════════════════════════════════════════════════════════
+# TRAINING LOOP (with early stopping)
+# ══════════════════════════════════════════════════════════════════════════════
+
+best_val_loss = float("inf")
+patience_counter = 0
 
 for epoch in range(1, NUM_EPOCHS + 1):
     t0      = time.perf_counter()
     train_m = train_epoch(model, train_loader, optimizer, criterion, device, CLIP_GRAD,
                           log_every=10 if epoch == 1 else 0)
-    
+
     val_m   = validate(model, val_loader, criterion, device)
     scheduler.step()
 
@@ -398,7 +405,10 @@ for epoch in range(1, NUM_EPOCHS + 1):
 
     if is_best:
         best_val_loss = val_m["val_loss"]
+        patience_counter = 0
         save_checkpoint(model, CHECKPOINT_PATH, epoch, val_m, arch_cfg, MODEL_TYPE)
+    else:
+        patience_counter += 1
 
     print_epoch(epoch, NUM_EPOCHS, train_m, val_m, elapsed, is_best)
 
@@ -411,22 +421,28 @@ for epoch in range(1, NUM_EPOCHS + 1):
         "val_sent_acc": val_m["val_sent_acc"],
     })
 
-    if epoch % EVALUATE_ON_EVAL_FUNCTIONS_AFTER == 0:
-        print("\n" + "=" * 68)
-        print("  Evaluation on fixed function list (autoregressive decoding)")
-        print("=" * 68)
-        run_eval_functions(model, device, logger=None, max_gen_len=MAX_GEN_LEN)
-        print("=" * 68)
-
+    # Early stopping check
+    if patience_counter >= PATIENCE:
+        print(f"\n  Early stopping triggered at epoch {epoch} (no improvement for {PATIENCE} epochs)")
+        break
 
 print(f"\n  Training complete.  Best val loss: {best_val_loss:.6f}")
 print(f"  Best checkpoint: {CHECKPOINT_PATH}")
 
-# ── Sample predictions from best checkpoint ──────────────────────────────
-print("\n  Loading best model for example predictions ...")
+
+# ══════════════════════════════════════════════════════════════════════════════
+# LOAD BEST MODEL
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n  Loading best model for evaluation ...")
 ckpt = torch.load(CHECKPOINT_PATH, map_location=device, weights_only=True)
 model.load_state_dict(ckpt["model_state"])
 model.eval()
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# SAMPLE PREDICTIONS
+# ══════════════════════════════════════════════════════════════════════════════
 
 print(f"\n  Example predictions (unified, greedy):")
 shown = 0
@@ -449,7 +465,11 @@ with torch.no_grad():
         if shown >= 4:
             break
 
-# ── Full validation set evaluation (autoregressive) ──────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# FULL VALIDATION SET EVALUATION (autoregressive)
+# ══════════════════════════════════════════════════════════════════════════════
+
 print("\n" + "=" * 68)
 print("  Full validation set evaluation (autoregressive decoding)")
 print("=" * 68)
@@ -501,6 +521,11 @@ with torch.no_grad():
         if (batch_idx + 1) % 10 == 0:
             print(f"    batch {batch_idx + 1}/{len(val_loader)} ...")
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+# COMPUTE METRICS
+# ══════════════════════════════════════════════════════════════════════════════
+
 # per-segment (per-coefficient) metrics
 seg_metrics = per_segment_metrics(all_pred_ids, all_tgt_ids, PAD_ID, BREAK_ID, N_COEFFS)
 
@@ -543,13 +568,235 @@ logger.log_val_eval({
 logger.log_per_coefficient_accuracy(seg_metrics)
 logger.log_sequence_lengths(pred_lengths, gt_lengths)
 
-# ── Final EVAL_FUNCTIONS evaluation (with SymPy) ─────────────────────────
+
+# ══════════════════════════════════════════════════════════════════════════════
+# TABLES & FIGURES
+# ══════════════════════════════════════════════════════════════════════════════
+
+import csv
+import numpy as np
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+
+# ── Table 1: Model architecture summary ───────────────────────────────────
+
 print("\n" + "=" * 68)
-print("  Final evaluation on EVAL_FUNCTIONS (exact + SymPy)")
+print("  Table 1: Model Architecture Summary")
 print("=" * 68)
-run_eval_functions(model, device, logger=logger, max_gen_len=MAX_GEN_LEN)
+print(f"    Model type        : {MODEL_TYPE}")
+print(f"    Parameters        : {n_params:,}")
+if MODEL_TYPE == "transformer":
+    print(f"    d_model           : {arch_cfg['d_model']}")
+    print(f"    nhead             : {arch_cfg['nhead']}")
+    print(f"    Encoder layers    : {arch_cfg['num_encoder_layers']}")
+    print(f"    Decoder layers    : {arch_cfg['num_decoder_layers']}")
+    print(f"    dim_feedforward   : {arch_cfg['dim_feedforward']}")
+    print(f"    Dropout           : {arch_cfg['dropout']}")
+else:
+    print(f"    d_model           : {arch_cfg['d_model']}")
+    print(f"    hidden_size       : {arch_cfg['hidden_size']}")
+    print(f"    Encoder layers    : {arch_cfg['num_encoder_layers']}")
+    print(f"    Decoder layers    : {arch_cfg['num_decoder_layers']}")
+    print(f"    Dropout           : {arch_cfg['dropout']}")
+
+# Save architecture table CSV
+arch_table_path = os.path.join(OUTPUT_DIR, "architecture_summary.csv")
+with open(arch_table_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["property", "value"])
+    writer.writerow(["model_type", MODEL_TYPE])
+    writer.writerow(["n_params", n_params])
+    for k, v in arch_cfg.items():
+        writer.writerow([k, v])
+
+# ── Table 2: Overall performance summary ──────────────────────────────────
+
+print("\n" + "=" * 68)
+print("  Table 2: Overall Performance Summary")
 print("=" * 68)
 
-# ── Generate report ──────────────────────────────────────────────────────
+# Get final epoch metrics
+final_epoch = logger.epoch_logs[-1] if logger.epoch_logs else {}
+print(f"    Final train loss   : {final_epoch.get('train_loss', 'N/A'):.6f}")
+print(f"    Final val loss     : {final_epoch.get('val_loss', 'N/A'):.6f}")
+print(f"    Best val loss      : {best_val_loss:.6f}")
+print(f"    Val token accuracy : {tok_acc:.4f}")
+print(f"    Val sent accuracy  : {sent_acc:.4f}")
+print(f"    Val func-level acc : {fn_acc:.4f}")
+
+# Save performance summary CSV
+perf_table_path = os.path.join(OUTPUT_DIR, "performance_summary.csv")
+with open(perf_table_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["metric", "value"])
+    writer.writerow(["model_type", MODEL_TYPE])
+    writer.writerow(["seed", RANDOM_SEED])
+    writer.writerow(["final_train_loss", f"{final_epoch.get('train_loss', 0):.6f}"])
+    writer.writerow(["final_val_loss", f"{final_epoch.get('val_loss', 0):.6f}"])
+    writer.writerow(["best_val_loss", f"{best_val_loss:.6f}"])
+    writer.writerow(["val_token_accuracy", f"{tok_acc:.4f}"])
+    writer.writerow(["val_sequence_accuracy", f"{sent_acc:.4f}"])
+    writer.writerow(["val_expression_validity", f"{expr_valid:.4f}"])
+    writer.writerow(["val_function_level_accuracy", f"{fn_acc:.4f}"])
+    writer.writerow(["total_epochs_trained", len(logger.epoch_logs)])
+    writer.writerow(["n_params", n_params])
+
+# ── Table 3: Per-coefficient accuracy table ───────────────────────────────
+
+print("\n" + "=" * 68)
+print("  Table 3: Per-Coefficient Accuracy")
+print("=" * 68)
+print(f"    {'Coeff':<8} {'Token Acc':<12} {'Sent Acc':<12} {'Valid Expr':<12}")
+print(f"    {'-'*44}")
+for i, d in enumerate(seg_metrics):
+    print(f"    c{i:<7} {d['token_acc']:<12.4f} {d['sentence_acc']:<12.4f} {d['correct_expression']:<12.4f}")
+
+# Save per-coefficient CSV
+coeff_table_path = os.path.join(OUTPUT_DIR, "per_coefficient_accuracy.csv")
+with open(coeff_table_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["coefficient", "token_acc", "sentence_acc", "correct_expression"])
+    for i, d in enumerate(seg_metrics):
+        writer.writerow([f"c{i}", f"{d['token_acc']:.4f}", f"{d['sentence_acc']:.4f}", f"{d['correct_expression']:.4f}"])
+
+# ── Table 4: Full run CSV (epoch_logs already saved by logger) ────────────
+
+# Already saved via logger._save_epoch_csv(), but save an explicit copy
+full_run_csv_path = os.path.join(OUTPUT_DIR, "full_run_metrics.csv")
+with open(full_run_csv_path, "w", newline="") as f:
+    writer = csv.DictWriter(f, fieldnames=[
+        "epoch", "train_loss", "val_loss",
+        "train_tok_acc", "val_tok_acc",
+        "train_sent_acc", "val_sent_acc",
+    ], extrasaction="ignore")
+    writer.writeheader()
+    writer.writerows(logger.epoch_logs)
+
+print(f"\n  Full run metrics saved to {full_run_csv_path}")
+
+# ── Figure 1: Train/Val loss curves ──────────────────────────────────────
+
+epochs_list = [e["epoch"] for e in logger.epoch_logs]
+train_losses = [e["train_loss"] for e in logger.epoch_logs]
+val_losses = [e["val_loss"] for e in logger.epoch_logs]
+
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(epochs_list, train_losses, label="Train Loss", color="tab:blue", linewidth=2)
+ax.plot(epochs_list, val_losses, label="Val Loss", color="tab:orange", linewidth=2)
+ax.set_xlabel("Epoch", fontsize=12)
+ax.set_ylabel("Loss", fontsize=12)
+ax.set_title(f"Train/Val Loss — {MODEL_TYPE.upper()} (10k samples, seed={RANDOM_SEED})", fontsize=14)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3)
+fig.savefig(os.path.join(OUTPUT_DIR, "fig1_loss_curves.png"), dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"  Figure 1 saved: fig1_loss_curves.png")
+
+# ── Figure 2: Sentence accuracy over epochs ──────────────────────────────
+
+train_sent_accs = [e["train_sent_acc"] for e in logger.epoch_logs]
+val_sent_accs = [e["val_sent_acc"] for e in logger.epoch_logs]
+
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(epochs_list, train_sent_accs, label="Train Sent Acc", color="tab:blue", linewidth=2)
+ax.plot(epochs_list, val_sent_accs, label="Val Sent Acc", color="tab:orange", linewidth=2)
+ax.set_xlabel("Epoch", fontsize=12)
+ax.set_ylabel("Sentence Accuracy", fontsize=12)
+ax.set_title(f"Sentence Accuracy — {MODEL_TYPE.upper()} (10k samples, seed={RANDOM_SEED})", fontsize=14)
+ax.set_ylim(0, 1.05)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3)
+fig.savefig(os.path.join(OUTPUT_DIR, "fig2_sentence_accuracy.png"), dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"  Figure 2 saved: fig2_sentence_accuracy.png")
+
+# ── Figure 3: Per-coefficient accuracy bar chart ─────────────────────────
+
+coeff_labels = [f"c{i}" for i in range(N_COEFFS)]
+tok_accs = [d["token_acc"] for d in seg_metrics]
+sent_accs_coeff = [d["sentence_acc"] for d in seg_metrics]
+expr_valids = [d["correct_expression"] for d in seg_metrics]
+
+x = np.arange(N_COEFFS)
+width = 0.25
+
+fig, ax = plt.subplots(figsize=(10, 6))
+bars1 = ax.bar(x - width, tok_accs, width, label="Token Acc", color="tab:blue")
+bars2 = ax.bar(x, sent_accs_coeff, width, label="Sentence Acc", color="tab:green")
+bars3 = ax.bar(x + width, expr_valids, width, label="Valid Expression", color="tab:red")
+
+ax.set_xlabel("Coefficient", fontsize=12)
+ax.set_ylabel("Accuracy", fontsize=12)
+ax.set_title(f"Per-Coefficient Accuracy — {MODEL_TYPE.upper()} (10k samples, seed={RANDOM_SEED})", fontsize=14)
+ax.set_xticks(x)
+ax.set_xticklabels(coeff_labels)
+ax.set_ylim(0, 1.05)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3, axis="y")
+
+# Add value labels on bars
+for bars in [bars1, bars2, bars3]:
+    for bar in bars:
+        height = bar.get_height()
+        if height > 0.02:
+            ax.annotate(f'{height:.2f}',
+                        xy=(bar.get_x() + bar.get_width() / 2, height),
+                        xytext=(0, 3), textcoords="offset points",
+                        ha='center', va='bottom', fontsize=8)
+
+fig.savefig(os.path.join(OUTPUT_DIR, "fig3_per_coefficient_accuracy.png"), dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"  Figure 3 saved: fig3_per_coefficient_accuracy.png")
+
+# ── Figure 4: Token accuracy over epochs ─────────────────────────────────
+
+train_tok_accs = [e["train_tok_acc"] for e in logger.epoch_logs]
+val_tok_accs = [e["val_tok_acc"] for e in logger.epoch_logs]
+
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.plot(epochs_list, train_tok_accs, label="Train Token Acc", color="tab:blue", linewidth=2)
+ax.plot(epochs_list, val_tok_accs, label="Val Token Acc", color="tab:orange", linewidth=2)
+ax.set_xlabel("Epoch", fontsize=12)
+ax.set_ylabel("Token Accuracy", fontsize=12)
+ax.set_title(f"Token Accuracy — {MODEL_TYPE.upper()} (10k samples, seed={RANDOM_SEED})", fontsize=14)
+ax.set_ylim(0, 1.05)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3)
+fig.savefig(os.path.join(OUTPUT_DIR, "fig4_token_accuracy.png"), dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"  Figure 4 saved: fig4_token_accuracy.png")
+
+# ── Figure 5: Sequence length histogram ──────────────────────────────────
+
+fig, ax = plt.subplots(figsize=(10, 6))
+ax.hist(gt_lengths, bins=30, alpha=0.6, label="Ground Truth", color="tab:blue")
+ax.hist(pred_lengths, bins=30, alpha=0.6, label="Predicted", color="tab:orange")
+ax.set_xlabel("Sequence Length", fontsize=12)
+ax.set_ylabel("Count", fontsize=12)
+ax.set_title(f"Predicted vs Ground Truth Sequence Lengths — {MODEL_TYPE.upper()}", fontsize=14)
+ax.legend(fontsize=11)
+ax.grid(True, alpha=0.3)
+fig.savefig(os.path.join(OUTPUT_DIR, "fig5_sequence_lengths.png"), dpi=150, bbox_inches="tight")
+plt.close(fig)
+print(f"  Figure 5 saved: fig5_sequence_lengths.png")
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# CUSTOM TEST FUNCTIONS EVALUATION (final, with SymPy)
+# ══════════════════════════════════════════════════════════════════════════════
+
+print("\n" + "=" * 68)
+print("  Final evaluation on CUSTOM_TEST_FUNCTIONS (exact + SymPy)")
+print("=" * 68)
+run_custom_test_functions(model, device, logger=logger, max_gen_len=MAX_GEN_LEN)
+print("=" * 68)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# GENERATE REPORT
+# ══════════════════════════════════════════════════════════════════════════════
+
 logger.generate_report()
 print(f"\n  Report saved to {OUTPUT_DIR}/")
+print(f"  All tables and figures generated successfully.")

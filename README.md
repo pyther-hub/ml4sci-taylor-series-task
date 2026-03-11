@@ -1,14 +1,14 @@
 # Taylor Series Coefficient Prediction
 
-A deep learning system for predicting Taylor series coefficients of mathematical functions using a Sequence-to-Sequence Transformer model.
+A deep learning system for predicting Taylor series coefficients of mathematical functions using Seq2Seq models (Transformer and LSTM).
 
-## 📋 Setup & Installation
+## Setup & Installation
 
 ### Prerequisites
 - Python 3.12+
 - PyTorch (tested with CUDA support)
 - SymPy for symbolic mathematics
-- NumPy, Pandas, Scikit-learn
+- NumPy, Pandas, Scikit-learn, Matplotlib
 
 ### Installation Steps
 
@@ -25,419 +25,279 @@ A deep learning system for predicting Taylor series coefficients of mathematical
 
 3. **Install dependencies:**
    ```bash
-   pip install torch sympy numpy pandas scikit-learn jupyter
-   ```
-
-4. **Verify setup:**
-   ```bash
-   python main.py --help  # Or just python main.py to start training
+   pip install torch sympy numpy pandas scikit-learn matplotlib jupyter
    ```
 
 ---
 
-## 🎯 Project Overview
+## Project Overview
 
-This project trains a Transformer-based neural network to predict the **Taylor series coefficients** of mathematical functions. Given a function `f(x)` as input, the model outputs all 5 Taylor coefficients `(c₀, c₁, c₂, c₃, c₄)` representing:
+This project trains neural networks to predict the **Taylor series coefficients** of mathematical functions. Given a function `f(x)` as input, the model outputs all 5 Taylor coefficients `(c0, c1, c2, c3, c4)` representing:
 
 ```
-f(x) ≈ c₀ + c₁·x/1 + c₂·x²/2 + c₃·x³/6 + c₄·x⁴/24
+f(x) ~ c0 + c1*x + c2*x^2/2! + c3*x^3/3! + c4*x^4/4!
 ```
 
-### Key Innovation: Unified Prediction
-- **Single-pass decoding**: All coefficients predicted in one sequence instead of 5 separate models
-- **<BREAK> token delimiter**: Coefficients separated by special `<BREAK>` tokens in output sequence
-- **Autoregressive generation**: One token at a time with greedy decoding
+### Key Design
+- **Single-pass decoding**: All coefficients predicted in one sequence
+- **`<BREAK>` token delimiter**: Coefficients separated by special `<BREAK>` tokens in output sequence
+- **Autoregressive generation**: Greedy decoding at inference
 
 ---
 
-## 🔤 Tokenization Strategy
+## Experiment Configurations
 
-### Vocabulary (42 tokens)
+### 10k Dataset Run
 
-The model uses a fixed vocabulary comprising:
+**Environment:** Kaggle GPU (T4 16GB), 9-hour session limit
 
-| Category | Tokens | Count |
-|----------|--------|-------|
-| **Special** | `<PAD>`, `<SOS>`, `<EOS>`, `<UNK>`, `<BREAK>` | 5 |
-| **Variables** | `x`, `a` | 2 |
-| **Operators** | `+`, `-`, `*`, `/`, `**` | 5 |
-| **Digits** | `0-9` | 10 |
-| **Functions** | `sin`, `cos`, `exp`, `log`, `sqrt` | 5 |
-| **Delimiters** | `(`, `)` | 2 |
-| **Math Constants** | (represented as digits/fractions) | - |
+#### Shared Training Config
 
-**Total Vocabulary Size: 42 tokens**
+| Parameter | Value |
+|-----------|-------|
+| Dataset | `taylor_dataset_10k.json` (10,000 samples) |
+| Train/Val Split | 90% / 10% |
+| Random Seed | 1326 |
+| Batch Size | 64 |
+| Learning Rate | 3e-4 |
+| Optimizer | Adam (default betas) |
+| Scheduler | CosineAnnealingLR (eta_min = LR * 1e-2) |
+| Max Epochs | 100 |
+| Early Stopping | Patience = 10 epochs |
+| Gradient Clipping | 1.0 |
+| Loss Function | CrossEntropyLoss (ignore_index=PAD) |
+| Max Seq Length | 512 |
+| Vocab Size | 42 |
 
-### Encoding Scheme
+#### Transformer Config (`MODEL_TYPE = "transformer"`)
 
-Functions are represented in **prefix notation** (Polish notation):
-- Example: `x² + 1` → `[+, **, x, 2, 1]`
-- Unknown tokens default to `<UNK>` token
+| Parameter | Value |
+|-----------|-------|
+| d_model | 256 |
+| nhead | 8 |
+| Encoder layers | 6 |
+| Decoder layers | 8 |
+| dim_feedforward | 256 |
+| Dropout | 0.1 |
+| Estimated params | ~4.3M |
 
-### Special Tokens
+#### LSTM Config (`MODEL_TYPE = "lstm"`)
 
-| Token | ID | Purpose |
-|-------|----|----|
-| `<PAD>` | 0 | Padding for variable-length sequences |
-| `<SOS>` | 1 | Start of Sequence (input/output) |
-| `<EOS>` | 2 | End of Sequence |
-| `<UNK>` | 3 | Unknown tokens |
-| `<BREAK>` | 27 | Delimiter between coefficient segments |
+| Parameter | Value |
+|-----------|-------|
+| d_model | 256 |
+| hidden_size | 256 |
+| Encoder layers | 2 (bidirectional) |
+| Decoder layers | 2 (unidirectional) |
+| Attention | Bahdanau (additive) |
+| Dropout | 0.1 |
+| Weight tying | Yes (output projection = embedding) |
+
+#### Demo Mode
+
+Set `DEMO_RUN = True` to run only 2 epochs for quick testing/debugging.
 
 ---
 
-## 📊 Model Architectures
+## Model Architectures
 
-The project supports two model architectures, selectable via `MODEL_TYPE` in `main.py`.
-
-### 1. Transformer Encoder-Decoder (`MODEL_TYPE = "transformer"`)
+### 1. Transformer Encoder-Decoder
 
 ```
 Input Function (prefix tokens)
-        ↓
+        |
    [SOS] + encode(fn_tokens) + [EOS]
-        ↓
-┌──────────────────────┐
-│   ENCODER            │
-│ (6 layers)           │
-│ d_model=256          │
-│ nhead=8              │
-│ dim_feedforward=256  │
-└──────────────────────┘
-        ↓
-┌──────────────────────┐
-│   DECODER            │
-│ (8 layers)           │
-│ Autoregressive       │
-└──────────────────────┘
-        ↓
-Output Tokens (coefficients separated by <BREAK>)
-[SOS] + c0_tokens + [BREAK] + c1_tokens + [BREAK] + ... + [EOS]
+        |
++----------------------+
+|   ENCODER            |
+| (6 layers)           |
+| d_model=256          |
+| nhead=8              |
+| dim_feedforward=256  |
++----------------------+
+        |
++----------------------+
+|   DECODER            |
+| (8 layers)           |
+| Autoregressive       |
++----------------------+
+        |
+Output: [SOS] c0 [BREAK] c1 [BREAK] ... c4 [EOS]
 ```
 
-**Architecture Details:**
-- Embedding dimension: 256, Attention heads: 8
-- Encoder: 6 layers, Decoder: 8 layers
-- Feedforward hidden: 256, Dropout: 0.1
-- Positional encoding: Sinusoidal (max seq len: 512)
-- Total parameters: ~4.3M
+- Sinusoidal positional encoding (max 512)
+- Pre-norm transformer layers
+- KV-cached greedy decoding
 
-### 2. LSTM Seq2Seq with Attention (`MODEL_TYPE = "lstm"`)
+### 2. LSTM Seq2Seq with Attention
 
 ```
 Input Function (prefix tokens)
-        ↓
+        |
    [SOS] + encode(fn_tokens) + [EOS]
-        ↓
-┌──────────────────────────┐
-│   ENCODER                │
-│ Bidirectional LSTM       │
-│ (2 layers)               │
-│ d_model=256, hidden=256  │
-└──────────────────────────┘
-        ↓
-   Bahdanau (Additive) Attention
-        ↓
-┌──────────────────────────┐
-│   DECODER                │
-│ Unidirectional LSTM      │
-│ (2 layers)               │
-│ Attention context concat │
-└──────────────────────────┘
-        ↓
-Output Tokens (coefficients separated by <BREAK>)
-[SOS] + c0_tokens + [BREAK] + c1_tokens + [BREAK] + ... + [EOS]
+        |
++--------------------------+
+|   ENCODER                |
+| Bidirectional LSTM       |
+| (2 layers, d=256, h=256)|
++--------------------------+
+        |
+   Bahdanau Attention
+        |
++--------------------------+
+|   DECODER                |
+| Unidirectional LSTM      |
+| (2 layers)               |
++--------------------------+
+        |
+Output: [SOS] c0 [BREAK] c1 [BREAK] ... c4 [EOS]
 ```
 
-**Architecture Details:**
-- Embedding dimension: 256, LSTM hidden size: 256
-- Encoder: 2-layer bidirectional LSTM
-- Decoder: 2-layer unidirectional LSTM with Bahdanau attention
-- Attention computes context vector from encoder outputs at each decoder step
-- Weight tying: output projection shares weights with embedding
-- Dropout: 0.1
+- Packed sequences for variable-length inputs
+- Encoder final states projected to decoder initial states
+- Context vector concatenated with decoder input at each step
 
 **Shared across both models:**
 - Same vocabulary (42 tokens) and special token handling
 - Same public interface: `forward()`, `generate_batch()`, `generate()`
-- Same checkpoint format (with added `model_type` key)
+- Same checkpoint format
 
 ---
 
-## 🏋️ Training Details
+## Tokenization
 
-### Dataset
+### Vocabulary (42 tokens)
 
-- **Source**: Taylor coefficient dataset (JSON format)
-- **Format**: Each sample contains a function and its 5 Taylor coefficients
-- **Train/Val Split**: 90% / 10%
-- **Preprocessing**: Automatically filters out sequences exceeding `max_seq_len=512`
+| Category | Tokens | Count |
+|----------|--------|-------|
+| Special | `<PAD>`, `<SOS>`, `<EOS>`, `<UNK>`, `<BREAK>` | 5 |
+| Variables | `x`, `a` | 2 |
+| Operators | `+`, `-`, `*`, `/`, `**` | 5 |
+| Digits | `0-9` | 10 |
+| Functions | `sin`, `cos`, `exp`, `log`, `sqrt` | 5 |
+| Delimiters | `(`, `)` | 2 |
 
-### Training Configuration
+Functions are encoded in **prefix notation** (Polish notation):
+- `x^2 + 1` -> `[+, **, x, 2, 1]`
 
-| Parameter | Value | Description |
-|-----------|-------|-------------|
-| Batch Size | 64 | Samples per batch |
-| Learning Rate | 3e-4 | Initial Adam LR |
-| Optimizer | Adam | Adam with default betas |
-| Scheduler | Cosine Annealing | η_min = LR × 1e-2 |
-| Epochs | 100 | Maximum training epochs |
-| Gradient Clipping | 1.0 | Prevents exploding gradients |
-| Loss Function | CrossEntropyLoss | Ignores PAD tokens |
-| Max Seq Length | 512 | Truncates longer sequences |
+---
+
+## Training Pipeline
 
 ### Training Loop
 
-```python
-For each epoch:
-  1. Train on full training set (teacher forcing)
-  2. Validate on validation set (teacher forcing - fast)
-  3. Save checkpoint for every epoch
-  4. Every 5 epochs: Evaluate on fixed test functions (autoregressive)
-  5. Save best checkpoint by validation loss
+```
+For each epoch (up to 100, with patience=10):
+  1. Train on training set (teacher forcing)
+  2. Validate on validation set (teacher forcing)
+  3. Save checkpoint
+  4. Track best val_loss, early stop if no improvement for 10 epochs
+
+After training:
+  5. Load best checkpoint
+  6. Sample predictions on validation set
+  7. Full autoregressive evaluation on validation set
+  8. Generate all tables and figures
+  9. Evaluate on 30 custom test functions (exact + SymPy match)
 ```
 
-### Loss Computation
+### Evaluation Metrics
 
-- **Ignore index**: `PAD_ID` (padding tokens excluded from loss)
-- **Reduction**: Mean across batch
-- **Masking**: Automatic via `ignore_index` in CrossEntropyLoss
+| Metric | Description |
+|--------|-------------|
+| Token Accuracy | Fraction of non-PAD tokens predicted correctly |
+| Sentence Accuracy | Fraction of sequences where ALL tokens match |
+| Expression Validity | Fraction of predictions that form valid prefix expressions |
+| Function-Level Accuracy | Fraction where ALL 5 coefficients are correct |
+| Per-Coefficient Accuracy | Token/sentence/expression accuracy for each c0-c4 |
+
+### Custom Test Functions
+
+30 handpicked functions evaluated at the end with both exact-match and SymPy equivalence checking. Examples:
+- `(x**2 + 1)*sin(x)`, `exp(x)*cos(x)`, `log(1 + x)`, `x/(1 - x)`, etc.
 
 ---
 
-## 📈 Evaluation Metrics
+## Output
 
-### 1. **Token Accuracy**
-```
-Fraction of non-PAD tokens predicted correctly
-Range: [0, 1] | 1.0 = perfect token-level predictions
-```
+### Generated Tables (CSV)
 
-### 2. **Sequence (Sentence) Accuracy**
-```
-Fraction of sequences where ALL tokens match ground truth
-Range: [0, 1] | 1.0 = all sequences perfectly predicted
-```
+| File | Contents |
+|------|----------|
+| `architecture_summary.csv` | Model type, param count, layer config |
+| `performance_summary.csv` | Final losses, accuracies, training info |
+| `per_coefficient_accuracy.csv` | c0-c4 token/sentence/expression accuracy |
+| `full_run_metrics.csv` | Per-epoch: loss, token acc, sentence acc |
+| `eval_functions_results.csv` | Per-function exact/sympy match results |
 
-### 3. **Expression Validity**
-```
-Fraction of predicted sequences that form valid prefix expressions
-(can be converted to infix without parse errors)
-Range: [0, 1] | Catches structural/syntactic errors
-```
+### Generated Figures (PNG)
 
-### 4. **Per-Coefficient Accuracy**
-```
-Evaluated separately for each of the 5 coefficients
-Split on <BREAK> tokens and compared individually
-```
+| File | Contents |
+|------|----------|
+| `fig1_loss_curves.png` | Train/val loss over epochs |
+| `fig2_sentence_accuracy.png` | Train/val sentence accuracy over epochs |
+| `fig3_per_coefficient_accuracy.png` | Grouped bar chart: c0-c4 accuracy |
+| `fig4_token_accuracy.png` | Train/val token accuracy over epochs |
+| `fig5_sequence_lengths.png` | Predicted vs ground truth length histogram |
 
-### 5. **Function-Level Accuracy**
-```
-Percentage of test functions where ALL 5 coefficients are correct
-Shows if the model can jointly predict all coefficients accurately
-```
-
-### Evaluation Protocol
-
-**During Training (Fast validation):**
-- Uses teacher-forced decoding
-- Measures on a batch sample from validation set
-
-**Post-Training (Thorough evaluation):**
-- Fixed set of 65 mathematical functions (e.g., `(x²+1)·sin(x)`, `exp(x)·log(1+x)`)
-- Autoregressive greedy decoding (no teacher forcing)
-- Per-coefficient and per-function accuracy reported
+All outputs are saved to `reports/{model_type}_{timestamp}/`.
 
 ---
 
-## 🚀 Running the Training
-
-### Basic Training
-
-```bash
-python main.py
-```
-
-This will:
-1. Load the dataset from the configured path
-2. Build encoder-decoder model
-3. Train for 100 epochs with validation
-4. Save checkpoints to `checkpoints/` directory
-5. Every 5 epochs: Evaluate on fixed test functions
-6. At the end: Load best checkpoint and show example predictions
-
-### Output
-
-The training script prints:
-- Dataset statistics (train/val split, samples skipped)
-- Model size and vocabulary info
-- Per-epoch: training loss, validation loss, elapsed time, best flag
-- Every 5 epochs: Detailed evaluation on test functions
-- Final: Best validation loss and example predictions
-
-### Checkpoints
-
-- **`checkpoints/epoch_NNN.pt`**: Checkpoint for every epoch
-- **`checkpoints/taylor_series_pred_baseline.pt`**: Best checkpoint by validation loss
-
-Each checkpoint contains:
-```python
-{
-    "epoch": int,
-    "model_state": state_dict,
-    "val_loss": float,
-    "n_coeffs": 5,
-    "config": {architecture config dict}
-}
-```
-
----
-
-## 🔍 Inference & Evaluation
-
-### Using the Model for Inference
-
-```python
-import torch
-from dataset import SOS_ID, EOS_ID, encode, decode, PAD_ID
-from model import CoeffPredTransformer
-
-# Load checkpoint
-ckpt = torch.load("checkpoints/taylor_series_pred_baseline.pt", map_location="cpu")
-model = CoeffPredTransformer(**ckpt["config"])
-model.load_state_dict(ckpt["model_state"])
-model.eval()
-
-# Prepare input
-fn_prefix_tokens = ["sin", "x"]  # Example
-src_ids = [SOS_ID] + encode(fn_prefix_tokens) + [EOS_ID]
-src = torch.tensor([src_ids], dtype=torch.long)
-
-# Generate predictions (autoregressive)
-with torch.no_grad():
-    pred_ids = model.generate(src, max_len=512)
-
-# Decode output
-pred_tokens = decode(pred_ids)
-print(f"Predicted tokens: {pred_tokens}")
-```
-
-### Evaluation Script
-
-See `main.py` for:
-- Fixed function list evaluation (every 5 epochs)
-- Example predictions on validation set
-- Function-level accuracy computation
-
----
-
-## 📁 Project Structure
+## Project Structure
 
 ```
 taylor-series-pred/
-├── main.py                          # Training entry point
-├── model.py                         # Transformer model architecture
-├── dataset.py                       # Dataset class & vocabulary
-├── dataset_generation.py            # Utilities for generating datasets
-├── train_validate.py                # Training loop & validation
-├── metrics.py                       # Evaluation metrics
-├── inference.py                     # Inference utilities
-├── checkpoints/                     # Saved model checkpoints
-│   ├── epoch_001.pt
-│   ├── epoch_002.pt
-│   └── taylor_series_pred_baseline.pt  # Best model
-├── train-taylor-series-task.ipynb   # Training notebook
-├── demo-infer-nb.ipynb              # Inference demo notebook
-└── dataset-gen-notebook.ipynb       # Dataset generation notebook
+├── main.py                  # Training entry point + report generation
+├── model.py                 # CoeffPredTransformer & CoeffPredLSTM
+├── dataset.py               # Dataset class & vocabulary
+├── dataset_generation.py    # Dataset generation utilities
+├── train_validate.py        # Training/validation loops
+├── metrics.py               # Evaluation metrics
+├── report_logger.py         # Report logger with plot generation
+├── inference.py             # Inference utilities
+├── checkpoints/             # Saved model checkpoints
+│   ├── epoch_NNN.pt
+│   └── taylor_series_pred_{model_type}.pt
+├── reports/                 # Generated reports (tables + figures)
+│   └── {model_type}_{timestamp}/
+└── *.ipynb                  # Jupyter notebooks
 ```
 
 ---
 
-## 🧪 Files Overview
-
-| File | Purpose |
-|------|---------|
-| `main.py` | Complete training pipeline with evaluation |
-| `model.py` | CoeffPredTransformer & CoeffPredLSTM (Seq2Seq architectures) |
-| `dataset.py` | Vocabulary, encoding/decoding, dataset loader |
-| `dataset_generation.py` | Tools for generating synthetic coefficient data |
-| `train_validate.py` | Training loops, validation, optimizer setup |
-| `metrics.py` | Token accuracy, sentence accuracy, validity checks |
-| `inference.py` | Helper functions for model inference |
-| `*.ipynb` | Jupyter notebooks for experimentation |
-
----
-
-## 🎓 Example: Training from Scratch
+## Quick Start
 
 ```bash
-# 1. Navigate to project
-cd /path/to/taylor-series-pred
+# Full training run
+python main.py  # Edit MODEL_TYPE in main.py: "transformer" or "lstm"
 
-# 2. Activate virtual environment
-source .venv/bin/activate
-
-# 3. Start training (adjust hyperparameters in main.py if needed)
+# Demo run (2 epochs)
+# Set DEMO_RUN = True in main.py, then:
 python main.py
-
-# 4. Monitor progress
-# - Training/validation loss printed each epoch
-# - Checkpoints saved to checkpoints/
-# - Every 5 epochs: evaluation on test functions
-
-# 5. After training, best model is at:
-# checkpoints/taylor_series_pred_baseline.pt
 ```
 
----
+### Customization
 
-## 🔧 Customization
-
-Edit these variables in `main.py` to customize training:
+Edit the configuration section in `main.py`:
 
 ```python
-# Model selection
+DEMO_RUN = False          # True for 2-epoch test run
 MODEL_TYPE = "transformer"  # "transformer" or "lstm"
-
-# Transformer config (used when MODEL_TYPE = "transformer")
-TRANSFORMER_CONFIG = {
-    "d_model": 256, "nhead": 8,
-    "num_encoder_layers": 6, "num_decoder_layers": 8,
-    "dim_feedforward": 256, "dropout": 0.1, "max_seq_len": 512,
-}
-
-# LSTM config (used when MODEL_TYPE = "lstm")
-LSTM_CONFIG = {
-    "d_model": 256, "hidden_size": 256,
-    "num_encoder_layers": 2, "num_decoder_layers": 2,
-    "dropout": 0.1, "max_seq_len": 512,
-}
-
-# Data
-DATASET_JSON = "path/to/taylor_dataset_10k.json"
-VAL_RATIO = 0.10
-
-# Training hyperparameters (shared)
-BATCH_SIZE = 64
+RANDOM_SEED = 1326
 NUM_EPOCHS = 100
+PATIENCE = 10             # Early stopping patience
+BATCH_SIZE = 64
 LR = 3e-4
-CLIP_GRAD = 1.0
-
-# Evaluation
-MAX_GEN_LEN = 512  # Max tokens to generate during inference
 ```
-
 
 ---
 
+## Notes
 
-
-## 📝 Notes
-
-- The model uses **prefix notation** (Polish notation) for all expressions
-- **<BREAK> tokens** are critical for separating coefficients during decoding
-- **Teacher forcing** used during training for speed; autoregressive decoding used for evaluation
-- Dataset filtering removes sequences > 512 tokens
-- Best checkpoint selected by validation loss, not test set accuracy
-
+- Prefix notation (Polish notation) for all expressions
+- `<BREAK>` tokens delimit coefficients in the output sequence
+- Teacher forcing during training; autoregressive decoding for evaluation
+- Sequences > 512 tokens are filtered out
+- Best checkpoint selected by validation loss
+- Early stopping with patience=10 prevents overfitting
