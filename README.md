@@ -47,6 +47,11 @@ f(x) ~ c0 + c1*x + c2*x^2/2! + c3*x^3/3! + c4*x^4/4!
 
 ## Experiment Configurations
 
+### Experiment links
+1. Transformer Experiment - https://www.kaggle.com/code/tensorpanda231/train-taylor-series-task (Version 18)
+2. LSTM Experiment - https://www.kaggle.com/code/tensorpanda231/train-taylor-series-task (Version 17)
+
+
 ### 100k Dataset Run
 
 **Environment:** Kaggle GPU (T4 16GB), 9-hour session limit
@@ -60,7 +65,7 @@ f(x) ~ c0 + c1*x + c2*x^2/2! + c3*x^3/3! + c4*x^4/4!
 | d_model | 256 | 256 |
 | hidden_size | 256 | -- |
 | nhead | -- | 8 |
-| Encoder layers | 2 (bidirectional) | 3 |
+| Encoder layers | 2  | 3 |
 | Decoder layers | 4 | 8 |
 | dim_feedforward | -- | 256 |
 | Batch size | 256 | 64 |
