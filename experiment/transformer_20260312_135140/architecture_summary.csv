@@ -1,0 +1,9 @@
+property,value
+model_type,transformer
+n_params,6470400
+d_model,256
+nhead,8
+num_encoder_layers,3
+num_decoder_layers,8
+dim_feedforward,256
+dropout,0.1

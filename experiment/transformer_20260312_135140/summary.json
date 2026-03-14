@@ -1,0 +1,71 @@
+{
+  "config": {
+    "model_type": "transformer",
+    "d_model": 256,
+    "nhead": 8,
+    "num_encoder_layers": 3,
+    "num_decoder_layers": 8,
+    "dim_feedforward": 256,
+    "dropout": 0.1,
+    "optimizer": "Adam",
+    "lr": 0.0003,
+    "scheduler": "CosineAnnealingLR",
+    "batch_size": 64,
+    "epochs": 30,
+    "patience": 10,
+    "gradient_clipping": 1.0,
+    "dataset_size": 99443,
+    "train_size": 89499,
+    "val_size": 9944,
+    "vocab_size": 29,
+    "max_seq_len": 512,
+    "n_params": 6470400,
+    "seed": 1326,
+    "demo_run": false
+  },
+  "val_eval": {
+    "token_accuracy": 0.7833223784474197,
+    "sequence_accuracy": 0.8825422525405884,
+    "expression_validity": 0.9838093322606596,
+    "function_level_accuracy": 0.8825422365245374
+  },
+  "per_coefficient": [
+    {
+      "coeff": "c0",
+      "token_acc": 0.9808077054990283,
+      "sentence_acc": 0.9822003245353699,
+      "correct_expression": 0.998793242156074
+    },
+    {
+      "coeff": "c1",
+      "token_acc": 0.9261915845675904,
+      "sentence_acc": 0.9448913931846619,
+      "correct_expression": 0.9966814159292036
+    },
+    {
+      "coeff": "c2",
+      "token_acc": 0.8396303155125565,
+      "sentence_acc": 0.9189460873603821,
+      "correct_expression": 0.9897425583266292
+    },
+    {
+      "coeff": "c3",
+      "token_acc": 0.7420709210969506,
+      "sentence_acc": 0.9041633009910583,
+      "correct_expression": 0.9787811745776348
+    },
+    {
+      "coeff": "c4",
+      "token_acc": 0.7934766531835399,
+      "sentence_acc": 0.9049678444862366,
+      "correct_expression": 0.955048270313757
+    }
+  ],
+  "eval_functions": {
+    "n_functions": 30,
+    "exact_match_all_correct": 22,
+    "exact_match_accuracy": 0.7333,
+    "sympy_match_all_correct": 22,
+    "sympy_match_accuracy": 0.7333
+  }
+}

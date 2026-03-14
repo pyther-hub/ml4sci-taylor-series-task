@@ -1,0 +1,12 @@
+metric,value
+model_type,transformer
+seed,1326
+final_train_loss,0.045651
+final_val_loss,0.042164
+best_val_loss,0.042106
+val_token_accuracy,0.7833
+val_sequence_accuracy,0.8825
+val_expression_validity,0.9838
+val_function_level_accuracy,0.8825
+total_epochs_trained,30
+n_params,6470400

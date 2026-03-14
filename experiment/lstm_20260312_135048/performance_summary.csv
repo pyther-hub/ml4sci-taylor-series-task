@@ -1,0 +1,12 @@
+metric,value
+model_type,lstm
+seed,1326
+final_train_loss,0.135657
+final_val_loss,0.136790
+best_val_loss,0.136790
+val_token_accuracy,0.6140
+val_sequence_accuracy,0.7686
+val_expression_validity,0.9835
+val_function_level_accuracy,0.7686
+total_epochs_trained,30
+n_params,5726208
