@@ -50,6 +50,8 @@ f(x) ~ c0 + c1*x + c2*x^2/2! + c3*x^3/3! + c4*x^4/4!
 ### Experiment links
 1. Transformer Experiment - https://www.kaggle.com/code/tensorpanda231/train-taylor-series-task (Version 18)
 2. LSTM Experiment - https://www.kaggle.com/code/tensorpanda231/train-taylor-series-task (Version 17)
+3. Dataset Generation - https://www.kaggle.com/code/tensorpanda231/taylor-series-dataset-gen
+   (The output file name is wrong instead of 1k it will be 100k)
 
 
 ### 100k Dataset Run
