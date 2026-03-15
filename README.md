@@ -54,6 +54,40 @@ f(x) ~ c0 + c1*x + c2*x^2/2! + c3*x^3/3! + c4*x^4/4!
 
 ### 100k Dataset Run
 
+#### Data Generation
+
+The dataset of ~100k samples was generated using `dataset_generation.py`, run on Kaggle via [`notebook/taylor-series-dataset-generation.ipynb`](notebook/taylor-series-dataset-generation.ipynb) ([Kaggle link ](https://www.kaggle.com/code/tensorpanda231/taylor-series-dataset-generation)).
+
+**Generation Config:**
+
+| Parameter | Value |
+|-----------|-------|
+| `n_ops_range` | (2, 5) — 2 to 5 internal nodes per expression tree |
+| `max_depth` | 4 |
+| `max_nodes` | 12 |
+| `taylor_order` | 4 (coefficients c0–c4) |
+| `x_bias` | 4.0 |
+| `SIMPLIFY_TIMEOUT` | 5s per SymPy call |
+| `SAVE_EVERY` | 100 samples |
+
+**Expression constraints:**
+- **Binary ops:** `+`, `-`, `*`, `/`, `**`
+- **Unary functions:** `sin`, `cos`, `exp`, `log`, `sqrt` — each must wrap a sub-expression containing `x` (e.g. `sin(3)` is rejected)
+- **Power nodes:** only `x**2` and `x**3` allowed when the base is bare `x`; compound bases like `(1+x)**(-1)` or `sqrt(1+x)` are permitted
+- **Leaves:** `x` or integer constants from `{-3, -2, -1, 1, 2, 3}` (no floats); `1` and `x` are oversampled for higher probability
+- **Validity filters:** expression must depend on `x`, have non-zero derivative, contain no complex/undefined values (`zoo`, `nan`, `oo`, `I`), and respect depth/node limits
+
+**Tokenization:**
+- Functions and coefficients are encoded in **prefix (Polish) notation**
+- Integers use **digit-level encoding** with a sign token: e.g. `42` → `['+', '4', '2']`, `-7` → `['-', '7']`
+- Rationals are encoded as `['/', sign, digits..., sign, digits...]`
+
+**Taylor coefficients:** For each function, the raw derivatives `d^n f/dx^n` evaluated at `x = a` are computed (not divided by `n!`). Each derivative computation is wrapped in a 5-second timeout via `SIGALRM`. Samples with any undefined coefficient are discarded.
+
+**Yield:** Not all random trees produce valid samples — expressions may fail validity checks, simplification, or coefficient computation. The generator retries up to `200 × N_SAMPLES` attempts, producing ~99.4k valid samples from the 100k target.
+
+---
+
 **Environment:** Kaggle GPU (T4 16GB), 9-hour session limit
 
 #### Model Configurations
@@ -259,10 +293,16 @@ taylor-series-pred/
 ├── experiment/              # Experiment reports (tables + figures)
 │   ├── lstm_20260312_135048/
 │   └── transformer_20260312_135140/
-├── checkpoints/             # Saved model checkpoints
-│   ├── epoch_NNN.pt
+├── datasets/                # Generated datasets (gitignored)
+│   └── taylor_dataset_100k.json
+├── checkpoints/             # Saved model checkpoints (gitignored)
 │   └── taylor_series_pred_{model_type}.pt
 └── notebook/                # Jupyter notebooks
+    ├── taylor-series-dataset-generation.ipynb
+    ├── train-taylor-series-task.ipynb
+    ├── lstm-run.ipynb
+    ├── transformer-run.ipynb
+    └── demo-infer-nb.ipynb
 ```
 
 ---
@@ -286,7 +326,7 @@ Edit the configuration section in `main.py`:
 DEMO_RUN = False          # True for 2-epoch test run
 MODEL_TYPE = "transformer"  # "transformer" or "lstm"
 RANDOM_SEED = 1326
-NUM_EPOCHS = 30
+NUM_EPOCHS = 100
 PATIENCE = 10             # Early stopping patience
 BATCH_SIZE = 64
 LR = 3e-4
