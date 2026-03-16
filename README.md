@@ -2,6 +2,64 @@
 
 A deep learning system for predicting Taylor series coefficients of mathematical functions using Seq2Seq models (Transformer and LSTM). Given a symbolic function `f(x)`, the model predicts 5 Taylor coefficients `(c0, c1, c2, c3, c4)` via greedy autoregressive decoding.
 
+---
+
+## Methodology
+
+### Objective
+
+The objective of this work is to predict the Taylor series representation of mathematical functions. Rather than generating the complete series, the model focuses on estimating the coefficients. The series is truncated at the fourth degree, resulting in five coefficients `(c0, c1, c2, c3, c4)`.
+
+### Solution Approach
+
+Both Transformer and LSTM architectures are trained to predict the first five Taylor series coefficients. Given a function `f(x)` represented in prefix notation, the models autoregressively generate the sequence:
+
+```
+[SOS] (c0) <BREAK> (c1) <BREAK> (c2) <BREAK> (c3) <BREAK> (c4) [EOS]
+```
+
+Each coefficient is produced as a symbolic expression in prefix notation. The `<BREAK>` token is used to explicitly delimit the coefficients within the generated sequence.
+
+### Dataset Generation
+
+Datasets were generated using SymPy by symbolically computing Taylor expansions up to fourth order for a diverse set of functions drawn from combinations of `sin`, `cos`, `exp`, `log`, `sqrt`, polynomial terms, and their compositions. Each sample stores both the function and each coefficient as a list of prefix-notation tokens.
+
+**Generated Dataset:**
+- ~100,000 samples split 90/10 into train and validation sets
+- 99,443 valid samples produced (99.4% yield from target)
+
+### Vocabulary & Tokenization
+
+The vocabulary contains **29 tokens** organized as follows:
+
+| Category | Tokens | Count | IDs |
+|----------|--------|-------|-----|
+| Special | `<PAD>`, `<SOS>`, `<EOS>`, `<UNK>`, `<BREAK>` | 5 | PAD=0, SOS=1, EOS=2, UNK=3, BREAK=28 |
+| Variables | `x`, `a` | 2 | -- |
+| Operators | `+`, `-`, `*`, `/`, `**` | 5 | -- |
+| Digits | `0–9` | 10 | -- |
+| Functions | `sin`, `cos`, `exp`, `log`, `sqrt` | 5 | -- |
+| Delimiters | `(`, `)` | 2 | -- |
+
+All expressions are encoded in **prefix (Polish) notation**:
+- Integers use digit-level encoding with sign: e.g., `42` → `['+', '4', '2']`, `-7` → `['-', '7']`
+- Rationals encoded as `['/', sign, digits..., sign, digits...]`
+- Example: `x^2 + 1` → `[+, **, x, 2, 1]`
+
+### Evaluation Metrics
+
+The following metrics quantify model performance across multiple granularities:
+
+| Metric | Description |
+|--------|-------------|
+| **Token Accuracy** | Fraction of non-PAD tokens predicted correctly across all positions |
+| **Sequence Accuracy** | Fraction of sequences where every single token matches the ground truth exactly |
+| **Expression Validity** | Fraction of predicted sequences that successfully parse from prefix to valid infix notation |
+| **Per-Coefficient Accuracy** | Each of c₀–c₄ evaluated individually by splitting on `<BREAK>` tokens, revealing how difficulty scales with coefficient order |
+| **Function-Level Accuracy** | Fraction of functions where all five coefficients are simultaneously correct |
+
+---
+
 ## Setup & Installation
 
 ### Prerequisites
@@ -27,23 +85,6 @@ A deep learning system for predicting Taylor series coefficients of mathematical
    ```bash
    pip install torch sympy numpy pandas scikit-learn matplotlib jupyter
    ```
-
----
-
-## Project Overview
-
-This project trains neural networks to predict the **Taylor series coefficients** of mathematical functions. Given a function `f(x)` as input, the model outputs all 5 Taylor coefficients `(c0, c1, c2, c3, c4)` representing:
-
-```
-f(x) ~ c0 + c1*x + c2*x^2/2! + c3*x^3/3! + c4*x^4/4!
-```
-
-### Key Design
-- **Single-pass decoding**: All coefficients predicted in one sequence
-- **`<BREAK>` token delimiter**: Coefficients separated by special `<BREAK>` tokens in output sequence
-- **Autoregressive generation**: Greedy decoding at inference
-
----
 
 ## Experiment Configurations
 
